@@ -9,7 +9,6 @@ package dependencygraph
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -62,10 +61,9 @@ type (
 	}
 
 	dependencyFreedTransactions struct {
-		txsNode  TxNodeBatch
-		mu       sync.Mutex
-		nonEmpty *atomic.Bool
-		cond     *sync.Cond
+		txsNode TxNodeBatch
+		mu      sync.Mutex
+		wakeup  *outputSignal
 	}
 
 	globalDepConfig struct {
@@ -87,10 +85,8 @@ func newGlobalDependencyManager(c *globalDepConfig) *globalDependencyManager {
 		dependencyDetector:              newDependencyDetector(),
 		mu:                              sync.Mutex{},
 		freedTransactionsSet: &dependencyFreedTransactions{
-			txsNode:  TxNodeBatch{},
-			mu:       sync.Mutex{},
-			nonEmpty: &atomic.Bool{},
-			cond:     sync.NewCond(&sync.Mutex{}),
+			txsNode: TxNodeBatch{},
+			wakeup:  newOutputSignal(),
 		},
 		waitingTxsSlots: utils.NewSlots(int64(c.waitingTxsLimit)),
 		waitingTxsLimit: c.waitingTxsLimit,
@@ -245,12 +241,9 @@ func (dm *globalDependencyManager) processValidatedTransactions(ctx context.Cont
 }
 
 func (dm *globalDependencyManager) outputFreedExistingTransactions(ctx context.Context) {
-	stop := context.AfterFunc(ctx, dm.freedTransactionsSet.signal)
-	defer stop()
-
 	for ctx.Err() == nil {
 		start := time.Now()
-		txsNode := dm.freedTransactionsSet.waitAndRemove()
+		txsNode := dm.freedTransactionsSet.waitAndRemove(ctx)
 
 		if len(txsNode) > 0 {
 			dm.outgoingDepFreeTransactionsNode <- txsNode
@@ -268,31 +261,16 @@ func (f *dependencyFreedTransactions) add(txsNode TxNodeBatch) {
 	)
 	f.mu.Unlock()
 
-	f.signal()
+	f.wakeup.signal()
 }
 
-// signal wakes the waiter in waitAndRemove. The flag is set under cond.L, which the waiter holds from
-// its check until Wait registers it, so the signal cannot fall between the two and be lost.
-func (f *dependencyFreedTransactions) signal() {
-	f.cond.L.Lock()
-	f.nonEmpty.Store(true)
-	f.cond.L.Unlock()
-	f.cond.Signal()
-}
-
-func (f *dependencyFreedTransactions) waitAndRemove() TxNodeBatch {
-	f.cond.L.Lock()
-	for !f.nonEmpty.CompareAndSwap(true, false) {
-		f.cond.Wait()
+func (f *dependencyFreedTransactions) waitAndRemove(ctx context.Context) TxNodeBatch {
+	if !f.wakeup.wait(ctx) {
+		return nil
 	}
-	f.cond.L.Unlock()
 
-	// NOTE: We have changed the nonEmpty to false before fetching txsNode
-	//       and making the list empty. By the time, we remove the txsNode
-	//       from the list, the nonEmpty might have been set to true by
-	//       processValidatedTransactions. As a result, the next call to
-	//       waitAndRemove may return an empty list. This is fine as long
-	//       as the caller is able to handle empty list.
+	// A concurrent add can signal before its transactions are drained here.
+	// The next wake-up may therefore find an empty queue, which is harmless.
 	f.mu.Lock()
 	txsNode := f.txsNode
 	f.txsNode = nil

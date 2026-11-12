@@ -331,7 +331,12 @@ func receiveStatusFromCoordinator(
 		if err != nil {
 			return errors.Wrap(err, "failed to receive statuses from the coordinator")
 		}
-		logger.Debugf("Received status batch (%d updates) from coordinator", len(response.GetStatus()))
+
+		if err := response.ValidateResults(); err != nil {
+			return err
+		}
+
+		logger.Debugf("Received status batch (%d updates) from coordinator", len(response.GetTxResult()))
 
 		txsStatus.Write(response)
 	}
@@ -351,6 +356,10 @@ func (r *relay) processStatusBatch(
 			return errors.Wrap(ctx.Err(), "context ended")
 		}
 
+		if err := tStatus.ValidateResults(); err != nil {
+			return err
+		}
+
 		// Handle feedback separately because a held or halted checkpoint has no status.
 		if tStatus.CheckpointFeedback != nil {
 			r.releaseCheckpointSlot(tStatus.CheckpointFeedback)
@@ -365,8 +374,9 @@ func (r *relay) processStatusBatch(
 
 		txStatusProcessedCount := int64(0)
 		startTime := time.Now()
-		statusReport := make([]*committerpb.TxStatus, 0, len(tStatus.Status))
-		for _, txStatus := range tStatus.Status {
+		statusReport := make([]*committerpb.TxStatus, 0, len(tStatus.TxResult))
+		for _, result := range tStatus.TxResult {
+			txStatus := result.Status
 			blkWithStatus := r.inFlightBlocks.get(txStatus.Ref.BlockNum)
 			if blkWithStatus == nil || !blkWithStatus.holds(txStatus.Ref) {
 				// A status is ours only if its block is still tracked and holds that TX ID at that
@@ -394,7 +404,8 @@ func (r *relay) processStatusBatch(
 				continue
 			}
 
-			if err := blkWithStatus.setFinalStatus(txStatus.Ref.TxNum, txStatus.Status); err != nil {
+			err := blkWithStatus.setFinalStatus(txStatus.Ref.TxNum, txStatus.Status)
+			if err != nil {
 				// This can never occur unless there is a bug in the relay or the coordinator.
 				return err
 			}

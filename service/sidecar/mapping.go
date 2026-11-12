@@ -73,9 +73,10 @@ type (
 	}
 
 	blockWithStatus struct {
-		block        *common.Block
-		txStatus     []committerpb.Status
-		pendingCount atomic.Int32
+		block              *common.Block
+		txStatus           []committerpb.Status
+		blindWriteVersions [][]*committerpb.NamespaceWriteVersions
+		pendingCount       atomic.Int32
 
 		// Fields for StreamBlocks support
 		blockNumber uint64                 // Block number
@@ -130,10 +131,11 @@ func mapBlock(block *common.Block, dedup *txIDDedup, cfg TxParsingConfig) (*bloc
 				Rejected: make([]*committerpb.TxStatus, 0, txCount),
 			},
 			withStatus: &blockWithStatus{
-				block:       block,
-				txStatus:    make([]committerpb.Status, txCount),
-				txs:         make([]*servicepb.TxWithRef, txCount),
-				blockNumber: blockNumber,
+				block:              block,
+				txStatus:           make([]committerpb.Status, txCount),
+				blindWriteVersions: make([][]*committerpb.NamespaceWriteVersions, txCount),
+				txs:                make([]*servicepb.TxWithRef, txCount),
+				blockNumber:        blockNumber,
 			},
 		},
 		txIDDedup: dedup,
@@ -417,7 +419,7 @@ func (m *blockMapper) rejectNonDBStatusTx(
 		// This can never occur unless there is a bug in the relay.
 		return errors.Newf("[BUG] status should be stored [blk:%d,num:%d]: %s", m.blockNumber, ref.TxNum, &status)
 	}
-	err := m.withStatus.setFinalStatus(ref.TxNum, status)
+	err := m.withStatus.setFinalStatus(ref.TxNum, status, nil)
 	if err != nil {
 		return err
 	}
@@ -443,11 +445,14 @@ func (b *blockWithStatus) holds(ref *committerpb.TxRef) bool {
 	return int(ref.TxNum) < len(b.txs) && b.txs[ref.TxNum].Ref.TxId == ref.TxId
 }
 
-func (b *blockWithStatus) setFinalStatus(txNum uint32, status committerpb.Status) error {
+func (b *blockWithStatus) setFinalStatus(txNum uint32, status committerpb.Status,
+	blind []*committerpb.NamespaceWriteVersions,
+) error {
 	if b.txStatus[txNum] != statusNotYetValidated {
 		// This can never occur unless there is a bug in the relay or the coordinator.
 		return errors.Newf("two results for a TX [blockNum: %d, txNum: %d]", b.block.Header.Number, txNum)
 	}
+	b.blindWriteVersions[txNum] = blind
 	b.txStatus[txNum] = status
 	b.pendingCount.Add(-1)
 	return nil

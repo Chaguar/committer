@@ -76,9 +76,10 @@ type (
 	// for streaming to StreamBlocks clients. This is a clean interface
 	// that separates the notifier from relay's internal blockWithStatus structure.
 	committedBlockWithTxs struct {
-		header   *common.BlockHeader
-		txs      []*servicepb.TxWithRef
-		statuses []committerpb.Status
+		header             *common.BlockHeader
+		txs                []*servicepb.TxWithRef
+		statuses           []committerpb.Status
+		blindWriteVersions [][]*committerpb.NamespaceWriteVersions
 	}
 
 	// blockStream represents a single StreamBlocks client subscription.
@@ -444,10 +445,13 @@ func (s *blockStream) streamWorker(stream committerpb.SidecarService_StreamBlock
 			return errors.New("block queue closed")
 		}
 
-		blockEvent := &committerpb.BlockEvent{
-			Header: block.header,
-			Events: s.filterAndBuildEvents(block),
+		events, err := s.filterAndBuildEvents(block)
+		if err != nil {
+			logger.Errorf("Failed to build block event: %+v", err)
+			return errors.New("failed to build block event")
 		}
+
+		blockEvent := &committerpb.BlockEvent{Header: block.header, Events: events}
 		if err := stream.Send(blockEvent); err != nil {
 			return errors.Wrap(err, "failed to send block event")
 		}
@@ -458,7 +462,7 @@ func (s *blockStream) streamWorker(stream committerpb.SidecarService_StreamBlock
 // and enriching with optional content based on the stream's configuration.
 func (s *blockStream) filterAndBuildEvents(
 	block *committedBlockWithTxs,
-) []*committerpb.TxEvent {
+) ([]*committerpb.TxEvent, error) {
 	// Pre-allocate with capacity for efficiency
 	events := make([]*committerpb.TxEvent, 0, len(block.txs))
 
@@ -482,6 +486,17 @@ func (s *blockStream) filterAndBuildEvents(
 		// Include namespaces (read/write sets) if requested
 		if s.includeReadWriteSets {
 			event.Namespaces = matchingNamespaces
+			if status == committerpb.Status_COMMITTED {
+				versions, err := buildCommittedWriteVersions(tx.Content.GetNamespaces(), block.blindWriteVersions[i])
+				if err != nil {
+					return nil, fmt.Errorf("build committed write versions: %w", err)
+				}
+				for _, ns := range versions {
+					if len(s.filterNamespaces) == 0 || slices.Contains(s.filterNamespaces, ns.NsId) {
+						event.CommittedWriteVersions = append(event.CommittedWriteVersions, ns)
+					}
+				}
+			}
 		}
 		// Include endorsements if requested
 		if s.includeEndorsements {
@@ -493,7 +508,7 @@ func (s *blockStream) filterAndBuildEvents(
 		events = append(events, event)
 	}
 
-	return events
+	return events, nil
 }
 
 func filterNamespaces(

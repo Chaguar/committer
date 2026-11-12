@@ -651,3 +651,12 @@ When the Sidecar restarts after a failure, it follows these steps:
 
 When a sidecar fails and restarts, the client should assume that no state is persisted at the sidecar and,
 therefore, needs to resubmit the transaction IDs of interest for which it has not yet received a status update.
+
+
+## Committed write versions
+
+`StreamBlocks` includes `TxEvent.committed_write_versions` when `include_read_write_sets` is true and the transaction status is `COMMITTED`. Namespace and status filters still apply. Each entry contains a key and its committed version. Match these entries to the original transaction writes using the namespace ID and key. Do not match them by list position.
+
+For a regular write that creates a new key, Sidecar reports version zero. For a regular write that updates an existing key, it reports the version supplied in the transaction plus one. VC supplies the versions for blind writes. Events for invalid or rejected transactions do not include write versions. Requests with `include_read_write_sets` set to false do not include them either.
+
+Sidecar matches each result using the transaction ID, block number, and transaction position. It saves the blind-write versions before decreasing the number of pending transactions in the block. It then includes these versions when building block events. Sidecar checks that the supplied metadata matches the original blind-write keys and builds separate output messages for each subscription. Filtering one subscription does not change another subscription's versions or the original transaction data.

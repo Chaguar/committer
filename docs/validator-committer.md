@@ -554,3 +554,14 @@ any transaction batches for which it has not received a final `TransactionsStatu
 4.  **Resume Operation:** Once the Coordinator has re-sent any necessary batches and they have been processed idempotently, the system seamlessly resumes normal operation.
 
 Snapshot hashing is not part of VC recovery at all: it belongs to the separate, single-instance [snapshot hasher](snapshot-hasher.md). The VC's only duty is to make the `_snapshot` record durable atomically with its clone; that service polls the latest snapshot record and hashes any record that still needs it, so a snapshot committed by a VC that then crashed is picked up on a later poll with no VC involvement.
+
+
+## Blind-write version feedback
+
+The preparer saves the keys of the original blind writes before checking the preliminary transaction status. These keys remain available even if validation removes the writes from the transaction. For a new blind-write key, VC assigns version zero. For an existing key, it assigns the current database version plus one. VC returns the assigned versions only after a successful commit. It does not return them for failed commit attempts or invalid transactions. Nil and empty values follow the same version rules.
+
+Each `servicepb.TxResult` contains the transaction status and its blind-write versions, grouped by namespace. These results are sent together in `TxStatusBatch.tx_result`. Sidecar calculates regular-write versions from the original transaction. Status-only RPCs return statuses without fetching write versions.
+
+When the Coordinator resubmits a transaction with the same transaction ID, block number, and transaction position, VC returns its stored status. If that status is `COMMITTED`, VC reads the current versions of the original blind-write keys. It does not increment these versions or update the database state. VC returns no write versions for a stored aborted status or a duplicate transaction at a different block number or transaction position. If a required key is missing or a database query fails, VC returns an error. The versions returned on resubmission are current database versions, not a saved record of the versions assigned at the original commit.
+
+This feature does not change database tables, columns, stored procedures, or stored transaction statuses. Write-version metadata is kept only in memory.

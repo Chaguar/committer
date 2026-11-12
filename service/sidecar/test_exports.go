@@ -65,7 +65,7 @@ func RequireStreamBlocks( //nolint:revive // argument-limit.
 	expectedHeader *common.BlockHeader,
 	txIDs []string,
 	status []committerpb.Status,
-) {
+) *committerpb.BlockEvent {
 	t.Helper()
 	require.Len(t, status, len(txIDs))
 
@@ -79,17 +79,22 @@ func RequireStreamBlocks( //nolint:revive // argument-limit.
 	}
 
 	// Receive and validate the batch
-	var events []*committerpb.TxEvent
+	var received *committerpb.BlockEvent
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
 		batch, err := stream.Recv()
 		require.NoError(ct, err)
 		require.NotNil(ct, batch)
 		test.RequireProtoEqual(ct, expectedHeader, batch.Header)
-		events = batch.Events
+		received = batch
 	}, 15*time.Second, 50*time.Millisecond)
 
-	require.NotNil(t, events)
-	test.RequireProtoElementsMatch(t, expected, events)
+	require.NotNil(t, received)
+	statuses := make([]*committerpb.TxEvent, len(received.Events))
+	for i, event := range received.Events {
+		statuses[i] = &committerpb.TxEvent{Ref: event.Ref, Status: event.Status}
+	}
+	test.RequireProtoElementsMatch(t, expected, statuses)
+	return received
 }
 
 // MalformedTxTestCases are valid and invalid TXs due to malformed.

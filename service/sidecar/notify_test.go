@@ -625,7 +625,8 @@ func TestStreamBlocks(t *testing.T) {
 		DataHash:     []byte("block-data-hash"),
 	}
 	block := &committedBlockWithTxs{
-		header: header,
+		header:             header,
+		blindWriteVersions: make([][]*committerpb.NamespaceWriteVersions, 4),
 		txs: []*servicepb.TxWithRef{
 			createTestTx(testTxID1, 0, testNs1),
 			createTestTx(testTxID2, 1, testNs2),

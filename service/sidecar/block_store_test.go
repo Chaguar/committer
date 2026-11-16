@@ -8,10 +8,12 @@ package sidecar
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Chaguar/common/api/committerpb"
+	"github.com/Chaguar/common/common/ledger/blkstorage"
 	"github.com/Chaguar/common/protoutil"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
@@ -40,6 +42,7 @@ func TestBlockStoreAndDelivery(t *testing.T) {
 	bs, err := newBlockStore(&LedgerConfig{Path: ledgerPath}, metrics)
 	require.NoError(t, err)
 	t.Cleanup(bs.close)
+	require.DirExists(t, filepath.Join(ledgerPath, blkstorage.ChainsDir, "committer"))
 
 	bd := &blockDeliveryTestWrapper{Service: &Service{blockStore: bs, metrics: metrics}}
 

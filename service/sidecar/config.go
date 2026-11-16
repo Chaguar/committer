@@ -9,8 +9,8 @@ package sidecar
 import (
 	"time"
 
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
-	"github.com/hyperledger/fabric-x-committer/utils/ordererdial"
+	"github.com/Chaguar/committer/utils/connection"
+	"github.com/Chaguar/committer/utils/ordererdial"
 )
 
 type (

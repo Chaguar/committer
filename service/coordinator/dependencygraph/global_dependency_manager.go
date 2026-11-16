@@ -233,6 +233,7 @@ func (dm *globalDependencyManager) processValidatedTransactions(ctx context.Cont
 		start = time.Now()
 		if len(fullyFreedDependents) > 0 {
 			promutil.SubFromGauge(m.dependentTxCount, len(fullyFreedDependents))
+			promutil.AddToGauge(m.gdgDepFreeTxCount, len(fullyFreedDependents))
 			dm.freedTransactionsSet.add(fullyFreedDependents)
 			fullyFreedDependents = nil
 		}
@@ -253,6 +254,7 @@ func (dm *globalDependencyManager) outputFreedExistingTransactions(ctx context.C
 
 		if len(txsNode) > 0 {
 			dm.outgoingDepFreeTransactionsNode <- txsNode
+			promutil.SubFromGauge(dm.metrics.gdgDepFreeTxCount, len(txsNode))
 		}
 		promutil.Observe(dm.metrics.gdgOutputFreedTxSeconds, time.Since(start))
 	}

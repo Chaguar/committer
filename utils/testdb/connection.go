@@ -10,15 +10,15 @@ import (
 	"context"
 	"time"
 
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	"github.com/hyperledger/fabric-x-common/utils/retry"
 	"github.com/jackc/puddle/v2"
 	"github.com/yugabyte/pgx/v5/pgxpool"
 
-	"github.com/hyperledger/fabric-x-committer/utils"
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
-	"github.com/hyperledger/fabric-x-committer/utils/statedb"
+	"github.com/Chaguar/committer/utils"
+	"github.com/Chaguar/committer/utils/connection"
+	"github.com/Chaguar/committer/utils/statedb"
 )
 
 var logger = flogging.MustGetLogger("db-connection")

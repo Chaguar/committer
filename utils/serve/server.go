@@ -11,9 +11,9 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/cenkalti/backoff/v5"
 	"github.com/cockroachdb/errors"
-	"github.com/hyperledger/fabric-x-common/utils/retry"
 	"google.golang.org/grpc/health"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 )

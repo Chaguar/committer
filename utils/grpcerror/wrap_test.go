@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger/fabric-x-common/utils/retry"
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
-	"github.com/hyperledger/fabric-x-committer/utils/test"
+	"github.com/Chaguar/committer/utils/test"
 )
 
 func TestHasCode(t *testing.T) {

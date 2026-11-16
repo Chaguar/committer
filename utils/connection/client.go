@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	"github.com/hyperledger/fabric-x-common/utils/retry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -43,7 +43,7 @@ const (
 	// gives up; this applies to service reconnection only.
 	defaultGrpcMaxAttempts = 1024
 	// TODO: All services including the orderer must use the same default maximum message size.
-	//       Hence, we need to move this constant to fabric-x-common.
+	//       Hence, we need to move this constant to Chaguar/common.
 	// MaxMsgSize is set to 100MB.
 	MaxMsgSize       = 100 * 1024 * 1024
 	scResolverSchema = "sc.connection"

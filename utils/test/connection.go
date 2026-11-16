@@ -15,15 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger/fabric-x-common/utils/retry"
+	"github.com/Chaguar/common/tools/cryptogen"
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/hyperledger/fabric-x-common/tools/cryptogen"
-
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
-	"github.com/hyperledger/fabric-x-committer/utils/serve"
+	"github.com/Chaguar/committer/utils/connection"
+	"github.com/Chaguar/committer/utils/serve"
 )
 
 var (

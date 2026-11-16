@@ -9,8 +9,8 @@ package coordinator
 import (
 	"testing"
 
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
-	"github.com/hyperledger/fabric-x-common/utils/retry"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

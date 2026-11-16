@@ -9,7 +9,7 @@ package connection
 import (
 	"crypto/tls"
 
-	"github.com/hyperledger/fabric-x-common/utils/retry"
+	"github.com/Chaguar/common/utils/retry"
 	"google.golang.org/grpc/credentials"
 )
 

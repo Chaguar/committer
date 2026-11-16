@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package statedb
 
 import (
-	"github.com/hyperledger/fabric-x-common/utils/retry"
+	"github.com/Chaguar/common/utils/retry"
 
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
+	"github.com/Chaguar/committer/utils/connection"
 )
 
 type (

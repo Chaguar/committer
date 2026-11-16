@@ -9,10 +9,10 @@ package ordererdial
 import (
 	"math/rand/v2"
 
-	"github.com/hyperledger/fabric-x-common/common/channelconfig"
-	"github.com/hyperledger/fabric-x-common/utils/retry"
+	"github.com/Chaguar/common/common/channelconfig"
+	"github.com/Chaguar/common/utils/retry"
 
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
+	"github.com/Chaguar/committer/utils/connection"
 )
 
 type (

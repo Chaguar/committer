@@ -9,7 +9,7 @@ package dependencygraph
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/hyperledger/fabric-x-committer/utils/monitoring"
+	"github.com/Chaguar/committer/utils/monitoring"
 )
 
 const (

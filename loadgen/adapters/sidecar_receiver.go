@@ -11,19 +11,19 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Chaguar/common/api/committerpb"
 	"github.com/cockroachdb/errors"
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
-	"github.com/hyperledger/fabric-x-common/api/committerpb"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/hyperledger/fabric-x-committer/loadgen/metrics"
-	"github.com/hyperledger/fabric-x-committer/utils"
-	"github.com/hyperledger/fabric-x-committer/utils/channel"
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
-	"github.com/hyperledger/fabric-x-committer/utils/delivercommitter"
-	"github.com/hyperledger/fabric-x-committer/utils/deliverorderer"
-	"github.com/hyperledger/fabric-x-committer/utils/ordererdial"
-	"github.com/hyperledger/fabric-x-committer/utils/serialization"
+	"github.com/Chaguar/committer/loadgen/metrics"
+	"github.com/Chaguar/committer/utils"
+	"github.com/Chaguar/committer/utils/channel"
+	"github.com/Chaguar/committer/utils/connection"
+	"github.com/Chaguar/committer/utils/delivercommitter"
+	"github.com/Chaguar/committer/utils/deliverorderer"
+	"github.com/Chaguar/committer/utils/ordererdial"
+	"github.com/Chaguar/committer/utils/serialization"
 )
 
 type sidecarReceiverParameters struct {

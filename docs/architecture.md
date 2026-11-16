@@ -3,7 +3,7 @@ Copyright IBM Corp. All Rights Reserved.
 
 SPDX-License-Identifier: Apache-2.0
 -->
-# Fabric-X Committer Architecture
+# Chaguar Committer Architecture
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## 1. Overview
 
-The Fabric-X Committer is built around seven core services, each designed with specific responsibilities in the transaction processing pipeline. The services are categorized into stateful and stateless components, with careful consideration given to scalability and fault tolerance.
+The Chaguar Committer is built around seven core services, each designed with specific responsibilities in the transaction processing pipeline. The services are categorized into stateful and stateless components, with careful consideration given to scalability and fault tolerance.
 
 These seven services are: **Sidecar**, **Coordinator**, **Verifier**, **Validator-Committer (VC)**, **Query Service**, **Snapshot Hasher**, and **Database Cluster**.
 
@@ -192,7 +192,7 @@ The database cluster serves as the system's persistent storage layer, maintainin
 
 ## 4. State Management
 
-State management in Fabric-X Committer is carefully designed to minimize persistent state while ensuring correctness and enabling efficient recovery. The architecture distinguishes between persistent state that must survive service restarts and transient state that can be safely discarded.
+State management in Chaguar Committer is carefully designed to minimize persistent state while ensuring correctness and enabling efficient recovery. The architecture distinguishes between persistent state that must survive service restarts and transient state that can be safely discarded.
 
 **Persistent State** is maintained in only two locations. The Sidecar maintains a block store on the local file system, which serves as a durable record of all blocks received from the Ordering Service. While this block store can be reconstructed from the Ordering Service if lost, maintaining it locally enables fast query responses and reduces load on the Ordering Service. The Database cluster stores all committed world state (key-value pairs for each namespace), transaction statuses, namespace endorsement policies, and system configuration. This makes the database the authoritative source of truth for the entire system.
 

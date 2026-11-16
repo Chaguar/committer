@@ -42,9 +42,9 @@ LABEL org.opencontainers.image.created="${CREATED}" \
     org.opencontainers.image.licenses="Apache-2.0" \
     org.opencontainers.image.ref.name="ubi9/ubi-minimal" \
     org.opencontainers.image.revision="${REVISION}" \
-    org.opencontainers.image.source="https://github.com/hyperledger/fabric-x-committer" \
+    org.opencontainers.image.source="https://github.com/Chaguar/committer" \
     org.opencontainers.image.title="fabric-x-${BIN}" \
-    org.opencontainers.image.url="https://github.com/hyperledger/fabric-x-committer" \
+    org.opencontainers.image.url="https://github.com/Chaguar/committer" \
     org.opencontainers.image.version="${VERSION}"
 
 # Use non-root user and set workdir using BIN argument

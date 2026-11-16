@@ -12,13 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyperledger/fabric-x-committer/cmd/cliutil"
-	"github.com/hyperledger/fabric-x-committer/cmd/config"
-	"github.com/hyperledger/fabric-x-committer/loadgen"
-	"github.com/hyperledger/fabric-x-committer/loadgen/adapters"
-	"github.com/hyperledger/fabric-x-committer/loadgen/workload"
+	"github.com/Chaguar/committer/cmd/cliutil"
+	"github.com/Chaguar/committer/cmd/config"
+	"github.com/Chaguar/committer/loadgen"
+	"github.com/Chaguar/committer/loadgen/adapters"
+	"github.com/Chaguar/committer/loadgen/workload"
 
-	"github.com/hyperledger/fabric-x-committer/utils/serve"
+	"github.com/Chaguar/committer/utils/serve"
 )
 
 const (
@@ -38,7 +38,7 @@ func main() {
 func loadgenCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   serviceName,
-		Short: fmt.Sprintf("%v is a load generator for Fabric-X committer.", serviceName),
+		Short: fmt.Sprintf("%v is a load generator for Chaguar Committer.", serviceName),
 	}
 
 	cmd.AddCommand(cliutil.VersionCmd())

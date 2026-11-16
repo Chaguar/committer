@@ -13,10 +13,10 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/spf13/cobra"
 
-	"github.com/hyperledger/fabric-x-committer/cmd/cliutil"
-	"github.com/hyperledger/fabric-x-committer/cmd/config"
-	"github.com/hyperledger/fabric-x-committer/mock"
-	"github.com/hyperledger/fabric-x-committer/utils/serve"
+	"github.com/Chaguar/committer/cmd/cliutil"
+	"github.com/Chaguar/committer/cmd/config"
+	"github.com/Chaguar/committer/mock"
+	"github.com/Chaguar/committer/utils/serve"
 )
 
 const (

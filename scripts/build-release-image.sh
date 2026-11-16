@@ -18,7 +18,7 @@ function build_image() {
   local image_name=$1
   local bin=$2
   local service_ports=$3
-  local manifest_name=${namespace}/fabric-x-${image_name}:${version}
+  local manifest_name=${namespace}/${image_name}:${version}
   local cmd=(
     "${docker_cmd}" build
     -f "${dockerfile_release_dir}/Dockerfile"
@@ -48,5 +48,5 @@ function build_image() {
 
 # build container images
 build_image committer committer "4001 2114 9001 2119 5001 2115 6001 2116 7001 2117 3001 2120"
-build_image loadgen loadgen "8001 2118"
+build_image fabric-x-loadgen loadgen "8001 2118"
 ${docker_cmd} images | grep -E "committer|loadgen"

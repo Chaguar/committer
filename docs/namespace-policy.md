@@ -137,8 +137,8 @@ Creating a namespace policy with an ECDSA threshold rule:
 
 ```go
 import (
-    "github.com/hyperledger/fabric-x-common/api/applicationpb"
-    "github.com/hyperledger/fabric-x-committer/utils/signature"
+    "github.com/Chaguar/common/api/applicationpb"
+    "github.com/Chaguar/committer/utils/signature"
 )
 
 policy := &applicationpb.NamespacePolicy{

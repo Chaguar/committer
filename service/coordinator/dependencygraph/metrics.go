@@ -56,8 +56,9 @@ type perfMetrics struct {
 	// performance of outputFreedExistingTransactions()
 	gdgOutputFreedTxSeconds prometheus.Histogram
 
-	// gdgDepFreeTxCount counts the transactions SimpleManager has released but the output channel
-	// has not taken yet. They are held outside every queue, so no queue gauge shows them.
+	// gdgDepFreeTxCount counts the transactions the global dependency graph has released but the
+	// output channel has not taken yet (SimpleManager's pending, globalDependencyManager's
+	// freedTransactionsSet). They are held outside every queue, so no queue gauge shows them.
 	gdgDepFreeTxCount prometheus.Gauge
 
 	// dependentTxCount is not a queue either; it counts the transactions blocked on a dependency

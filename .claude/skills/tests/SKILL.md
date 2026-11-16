@@ -5,7 +5,7 @@ description: Write and/or run unit and integration tests, ensuring high code cov
 
 # Testing Code Guidelines
 
-This document provides specific guidelines for writing and running tests in the committer project.
+This document provides specific guidelines for writing and running tests in the Chaguar Committer project.
 
 - **High Coverage Expected**: Strive for comprehensive test coverage, but focus on meaningful scenarios
 - **Minimize Mocks**: Use mocks sparingly; prefer testing with real dependencies when practical

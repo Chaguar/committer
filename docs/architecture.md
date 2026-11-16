@@ -93,7 +93,7 @@ The **Snapshot Hasher** likewise sits outside the pipeline. It is driven by dura
 
 ### 3.1 Sidecar Middleware
 
-The Sidecar acts as the critical bridge between the Hyperledger Fabric-X Ordering Service and the Committer's internal processing pipeline. It is responsible for fetching blocks sequentially from the Ordering Service, performing initial transaction validation to filter out malformed transactions, and maintaining a durable local block store on the file system.
+The Sidecar acts as the critical bridge between the Chaguar Ordering Service and the Committer's internal processing pipeline. It is responsible for fetching blocks sequentially from the Ordering Service, performing initial transaction validation to filter out malformed transactions, and maintaining a durable local block store on the file system.
 
 Beyond block ingestion, the Sidecar serves as the delivery endpoint for clients, providing committed blocks to registered applications and offering two notification mechanisms: transaction ID subscription for tracking specific transactions, and an all-transactions stream for monitoring all blockchain activity with optional filtering. It also exposes query APIs that allow clients to fetch historical blocks and transactions directly from the block store.
 

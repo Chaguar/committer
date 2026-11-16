@@ -545,7 +545,7 @@ func (s *Service) Deliver(srv peer.Deliver_DeliverServer) error {
 // DeliverFiltered implements an API in peer.DeliverServer.
 //
 // Deprecated: this method is implemented to have compatibility with Fabric so that the fabric smart client
-// can easily integrate with both FabricX and Fabric. Eventually, this method will be removed.
+// can easily integrate with both Chaguar and Fabric. Eventually, this method will be removed.
 func (*Service) DeliverFiltered(peer.Deliver_DeliverFilteredServer) error {
 	return grpcerror.WrapUnimplemented(errors.New("method is deprecated"))
 }
@@ -553,7 +553,7 @@ func (*Service) DeliverFiltered(peer.Deliver_DeliverFilteredServer) error {
 // DeliverWithPrivateData implements an API in peer.DeliverServer.
 //
 // Deprecated: this method is implemented to have compatibility with Fabric so that the fabric smart client
-// can easily integrate with both FabricX and Fabric. Eventually, this method will be removed.
+// can easily integrate with both Chaguar and Fabric. Eventually, this method will be removed.
 func (*Service) DeliverWithPrivateData(peer.Deliver_DeliverWithPrivateDataServer) error {
 	return grpcerror.WrapUnimplemented(errors.New("method is deprecated"))
 }

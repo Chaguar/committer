@@ -40,7 +40,7 @@ func main() {
 func mockCMD() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   mockCmdName,
-		Short: "Fabric-X services mock.",
+		Short: fmt.Sprintf("%s services mock.", cliutil.ProductName),
 	}
 	cmd.AddCommand(cliutil.VersionCmd())
 	cmd.AddCommand(mockStartCMD())

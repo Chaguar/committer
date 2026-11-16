@@ -30,7 +30,7 @@ import (
 
 const (
 	committerReleaseImage = "docker.io/chaguar/committer:latest"
-	loadgenReleaseImage   = "docker.io/chaguar/fabric-x-loadgen:latest"
+	loadgenReleaseImage   = "docker.io/chaguar/loadgen:latest"
 	networkPrefixName     = test.DockerNamesPrefix + "_network"
 	// containerConfigPath is the path to the config directory inside the container.
 	containerConfigPath = "/root/config"

@@ -48,5 +48,5 @@ function build_image() {
 
 # build container images
 build_image committer committer "4001 2114 9001 2119 5001 2115 6001 2116 7001 2117 3001 2120"
-build_image fabric-x-loadgen loadgen "8001 2118"
+build_image loadgen loadgen "8001 2118"
 ${docker_cmd} images | grep -E "committer|loadgen"

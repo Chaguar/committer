@@ -37,8 +37,9 @@ func main() {
 
 func loadgenCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   serviceName,
-		Short: fmt.Sprintf("%v is a load generator for Chaguar Committer.", serviceName),
+		Use: serviceName,
+		Short: fmt.Sprintf("%s is a load generator for %s %s.",
+			serviceName, cliutil.ProductName, cliutil.CommitterName),
 	}
 
 	cmd.AddCommand(cliutil.VersionCmd())

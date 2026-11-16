@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 ---
 site_name: Chaguar Committer
-site_description: High-throughput transaction validation and commit for Hyperledger Fabric-X
-site_url: https://Chaguar.github.io/committer/
+site_description: High-throughput transaction validation and commit for Chaguar
+site_url: https://chaguar.github.io/committer/
 repo_url: https://github.com/Chaguar/committer
 repo_name: Chaguar/committer
 

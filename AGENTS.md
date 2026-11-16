@@ -65,7 +65,7 @@ authoritative, detailed source for these conventions and keeps them in one place
   `utils/grpcerror` at gRPC edges.
 - **Code organization** — collate a struct's methods together; place a method above the
   functions it calls (caller before callee).
-- **Reuse `utils/` and `common` helpers**; run `make lint` (or `make lint-go`).
+- **Reuse `utils/` and `Chaguar/common` helpers**; run `make lint` (or `make lint-go`).
 
 See the skill for concurrency (`errgroup` + `utils/channel`), Go 1.27 idioms,
 service/config/metrics structure, and the full linter cheat sheet.

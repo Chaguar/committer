@@ -37,6 +37,7 @@ type (
 	}
 )
 
+// Keep the persisted ledger ID unchanged so existing block stores reopen after the product rename.
 const committerChannelID = "fabric-x-committer"
 
 // newBlockStore creates a new block store.

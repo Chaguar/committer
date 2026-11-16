@@ -27,7 +27,7 @@ func main() {
 func committerCMD() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   cliutil.CommitterName,
-		Short: fmt.Sprintf("Chaguar %s.", cliutil.CommitterName),
+		Short: fmt.Sprintf("%s %s.", cliutil.ProductName, cliutil.CommitterName),
 	}
 	cmd.AddCommand(cliutil.VersionCmd())
 	cmd.AddCommand(startCMD())

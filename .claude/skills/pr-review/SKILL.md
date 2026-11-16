@@ -47,7 +47,7 @@ Before starting any review, read:
 - `@docs/core-concurrency-pattern.md` — required concurrency patterns
 - `@.claude/skills/development/SKILL.md` — the conventions for writing NEW code (code
   ordering/caller-before-callee, errgroup + context-aware channels, error handling, Go 1.27
-  idioms, and reuse of `utils/` + `common` helpers). New or changed code that
+  idioms, and reuse of `utils/` + `Chaguar/common` helpers). New or changed code that
   deviates from this skill is a review finding — cite the specific convention it breaks.
 - `@.claude/skills/tests/SKILL.md` — the testing conventions (table-driven + `t.Parallel`,
   `require` over `assert`, `require.Eventually`/`EventuallyWithT` over sleeps, `t.Helper`/

@@ -108,7 +108,7 @@ func TestExtractAppTLSCAsFromEnvelope(t *testing.T) {
 
 	block, err := cryptogen.CreateOrExtendConfigBlockWithCrypto(cryptogen.ConfigBlockParameters{
 		TargetPath:  targetPath,
-		BaseProfile: configtxgen.SampleFabricX,
+		BaseProfile: configtxgen.SampleChaguar,
 		ChannelID:   "test-channel",
 		Organizations: []cryptogen.OrganizationParameters{
 			{

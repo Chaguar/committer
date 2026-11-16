@@ -224,8 +224,8 @@ func TestSignatureRule(t *testing.T) {
 		})
 	}
 
-	// Update the config block to have SampleFabricX profile instead of
-	// the default TwoOrgsSampleFabricX.
+	// Update the config block to have SampleChaguar profile instead of
+	// the default TwoOrgsSampleChaguar.
 	configBlock, err := testcrypto.CreateOrExtendConfigBlockWithCrypto(t.TempDir(), &testcrypto.ConfigBlock{})
 	require.NoError(t, err)
 	update = &servicepb.VerifierUpdates{

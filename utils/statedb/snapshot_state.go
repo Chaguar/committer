@@ -34,6 +34,8 @@ const (
 
 	selectSnapshotRecordSQL = "SELECT value FROM ns_" + committerpb.SnapshotNamespaceID + " WHERE key = $1;"
 
+	listSnapshotRecordsSQL = "SELECT key, value FROM ns_" + committerpb.SnapshotNamespaceID + " ORDER BY key;"
+
 	updateSnapshotRecordSQL = "UPDATE ns_" + committerpb.SnapshotNamespaceID +
 		" SET value = $2, version = version + 1 WHERE key = $1;"
 
@@ -152,6 +154,49 @@ func (s *SnapshotStateManager) Read(ctx context.Context, txID string) (*committe
 	}, retry.ErrNonRetryable, ErrSnapshotNotFound)
 }
 
+// List returns valid snapshot records ordered by transaction ID, including cleared clones.
+// Corrupt records are omitted and returned as errors alongside the valid records.
+func (s *SnapshotStateManager) List(ctx context.Context) ([]*committerpb.SnapshotState, error) {
+	type snapshotRecord struct {
+		key, raw []byte
+	}
+	records, err := retry.ExecuteWithResult(ctx, s.retryProfile, func() ([]snapshotRecord, error) {
+		rows, queryErr := s.pool.Query(ctx, listSnapshotRecordsSQL)
+		if queryErr != nil {
+			return nil, errors.Wrap(queryErr, "failed to query _snapshot records")
+		}
+		records, collectErr := pgx.CollectRows(rows, func(row pgx.CollectableRow) (snapshotRecord, error) {
+			var record snapshotRecord
+			scanErr := row.Scan(&record.key, &record.raw)
+			return record, errors.Wrap(scanErr, "failed to read _snapshot record")
+		})
+		return records, errors.Wrap(collectErr, "failed to read _snapshot records")
+	}, retry.ErrNonRetryable)
+	if err != nil {
+		return nil, err
+	}
+
+	// Decode outside the retry loop so corruption diagnostics are reported once by the caller.
+	states := make([]*committerpb.SnapshotState, 0, len(records))
+	var corruptRecords []error
+	for _, record := range records {
+		state, decodeErr := DecodeSnapshotState(record.raw)
+		if decodeErr != nil {
+			corruptRecords = append(corruptRecords, fmt.Errorf("corrupt _snapshot record for key %q: %w",
+				record.key, errors.Join(retry.ErrNonRetryable, decodeErr)))
+			continue
+		}
+		if state.GetTxRef().GetTxId() == "" || state.GetTxRef().GetTxId() != string(record.key) {
+			corruptRecords = append(corruptRecords, errors.Wrapf(retry.ErrNonRetryable,
+				"corrupt _snapshot record: key %q has mismatched transaction ID %q",
+				record.key, state.GetTxRef().GetTxId()))
+			continue
+		}
+		states = append(states, state)
+	}
+	return states, errors.Join(corruptRecords...)
+}
+
 // readRecord reads and decodes one snapshot record without retrying.
 // Read and ReadLatest share it so they report read and decode errors the same way.
 func (s *SnapshotStateManager) readRecord(ctx context.Context, key []byte) (*committerpb.SnapshotState, error) {
@@ -249,20 +294,23 @@ func (s *SnapshotStateManager) Update(ctx context.Context, ref *committerpb.TxRe
 	return err //nolint:wrapcheck // already wrapped inside the retried closure.
 }
 
-// MarkSnapshotCheckpointedInTx marks the latest snapshot CHECKPOINTED in the caller's
-// transaction. The checkpoint write and this update must commit together. Otherwise,
-// a crash could leave the snapshot waiting for a checkpoint and block new snapshots.
+// MarkSnapshotTerminalInTx updates the latest snapshot to target in the same transaction
+// as the checkpoint write. Separate commits could leave the write saved but the snapshot
+// unchanged after a crash, blocking new snapshot requests.
 //
-// An already-CHECKPOINTED record is left unchanged. A missing pointer or a different
-// block returns a non-retryable error: the record no longer matches what was verified.
-func MarkSnapshotCheckpointedInTx(ctx context.Context, tx pgx.Tx, blockNum uint64) error {
+// A record already at target is unchanged. The other final status, a missing snapshot
+// pointer, or a different block number returns a non-retryable error.
+// Only CHECKPOINTED and ABORTED are allowed; use SnapshotStateManager.Update for other statuses.
+func MarkSnapshotTerminalInTx(
+	ctx context.Context, tx pgx.Tx, blockNum uint64, target committerpb.SnapshotState_Status,
+) error {
 	var key []byte
 	if err := tx.QueryRow(ctx, getLatestSnapshotKeySQL, LatestSnapshotPointerKey).Scan(&key); err != nil {
 		return errors.Wrap(err, "failed to read the latest snapshot key")
 	}
 	if len(key) == 0 {
 		return errors.Wrapf(retry.ErrNonRetryable,
-			"no snapshot record to checkpoint for block %d, but its checkpoint was verified", blockNum)
+			"no snapshot record for block %d to mark %s, but its write was verified", blockNum, target)
 	}
 
 	var raw []byte
@@ -273,28 +321,41 @@ func MarkSnapshotCheckpointedInTx(ctx context.Context, tx pgx.Tx, blockNum uint6
 	if err != nil {
 		return errors.Wrapf(err, "failed to decode _snapshot record for key %s", key)
 	}
-	if state.Status == committerpb.SnapshotState_CHECKPOINTED {
-		return nil // already checkpointed: a resubmitted checkpoint must not rewrite it.
-	}
-	if state.TxRef == nil || state.TxRef.BlockNum != blockNum {
-		return errors.Wrapf(retry.ErrNonRetryable,
-			"the latest snapshot record is not for block %d, but its checkpoint was verified", blockNum)
+	if state.Status == target {
+		return nil // a resubmitted checkpoint or abort must not rewrite the record.
 	}
 
-	state.Status = committerpb.SnapshotState_CHECKPOINTED
+	// Shared-key checkpoint inserts reject competing closures before this call.
+	// This guard catches inconsistent metadata rather than normal commit collisions.
+	if state.Status == committerpb.SnapshotState_CHECKPOINTED ||
+		state.Status == committerpb.SnapshotState_ABORTED {
+		return errors.Wrapf(retry.ErrNonRetryable,
+			"the snapshot for block %d is already %s, but its %s write was verified",
+			blockNum, state.Status, target)
+	}
+
+	if state.TxRef == nil || state.TxRef.BlockNum != blockNum {
+		return errors.Wrapf(retry.ErrNonRetryable,
+			"the latest snapshot record is not for block %d, but its %s write was verified", blockNum, target)
+	}
+
+	state.Status = target
 	newRaw, err := EncodeSnapshotState(state)
 	if err != nil {
 		return errors.Wrapf(err, "failed to encode _snapshot record for key %s", key)
 	}
 	_, err = tx.Exec(ctx, updateSnapshotRecordSQL, key, newRaw)
-	return errors.Wrapf(err, "failed to mark the snapshot for block %d as checkpointed", blockNum)
+	return errors.Wrapf(err, "failed to mark the snapshot for block %d as %s", blockNum, target)
 }
 
-// DecodeSnapshotState unmarshals a `_snapshot` record value.
+// DecodeSnapshotState unmarshals a `_snapshot` record and rejects unknown lifecycle statuses.
 func DecodeSnapshotState(raw []byte) (*committerpb.SnapshotState, error) {
 	var state committerpb.SnapshotState
 	if err := proto.Unmarshal(raw, &state); err != nil {
 		return nil, errors.Wrap(err, "failed to decode _snapshot record")
+	}
+	if _, known := committerpb.SnapshotState_Status_name[int32(state.Status)]; !known {
+		return nil, errors.Newf("unexpected snapshot status %d", state.Status)
 	}
 	return &state, nil
 }

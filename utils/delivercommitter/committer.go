@@ -13,8 +13,8 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
 
-	"github.com/hyperledger/fabric-x-committer/utils/connection"
-	"github.com/hyperledger/fabric-x-committer/utils/deliver"
+	"github.com/Chaguar/committer/utils/connection"
+	"github.com/Chaguar/committer/utils/deliver"
 )
 
 // Parameters needed for deliver to run.

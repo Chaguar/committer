@@ -13,10 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
+	deliver "github.com/Chaguar/committer/utils/deliver"
 	common "github.com/hyperledger/fabric-protos-go-apiv2/common"
 	gomock "go.uber.org/mock/gomock"
-
-	deliver "github.com/Chaguar/committer/utils/deliver"
 )
 
 // MockDeliverer is a mock of Deliverer interface.

@@ -247,10 +247,6 @@ func (vc *validatorCommitter) receiveStatusAndForwardToOutput(
 			return classifyStreamRecvError(err)
 		}
 
-		if err := txsStatus.ValidateResults(); err != nil {
-			return err
-		}
-
 		logger.Debugf("Batch contains %d TX statuses", len(txsStatus.TxResult))
 
 		txsNode, untrackedTxIdx := vc.getTxsAndUpdatePolicies(txsStatus)
@@ -346,11 +342,7 @@ func (vc *validatorCommitter) getTxsAndUpdatePolicies(txsStatus *servicepb.TxSta
 	txsNode = make([]*dependencygraph.TransactionNode, 0, len(txsStatus.TxResult))
 	for i, result := range txsStatus.TxResult {
 		txStatus := result.Status
-		height := *servicepb.NewHeightFromTxRef(txStatus.Ref)
-		txNode, ok := vc.txBeingValidated.Load(height)
-		if ok {
-			ok = txNode.VCTx.Ref.TxId == txStatus.Ref.TxId && vc.txBeingValidated.CompareAndDelete(height, txNode)
-		}
+		txNode, ok := vc.txBeingValidated.LoadAndDelete(*servicepb.NewHeightFromTxRef(txStatus.Ref))
 		if !ok {
 			// Because the VC manager might submit the same transaction multiple times (for example,
 			// if a VC service fails or the coordinator reconnects to a failed VC service), it could

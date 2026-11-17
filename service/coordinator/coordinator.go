@@ -441,8 +441,7 @@ func (c *Service) sendTxStatus(
 
 		statusCount := make(map[committerpb.Status]int)
 		for _, result := range txStatus.TxResult {
-			s := result.Status
-			statusCount[s.Status]++
+			statusCount[result.Status.Status]++
 		}
 		m := c.metrics
 		for status, count := range statusCount {

@@ -221,8 +221,8 @@ If so, it returns the existing status without re-committing the transaction, ens
 
 ## Combined live transaction results
 
-Verifier and VC feedback use `servicepb.TxStatusBatch.tx_result`. Each `TxResult` contains the unchanged shared `TxStatus` plus optional blind-write versions. Verifier results and status-only lookup adapters have no version payload. The optional version payload is part of the shared transport; this migration does not collect versions.
+Verifier and VC feedback use `servicepb.TxStatusBatch.tx_result`. Each `TxResult` contains the shared `TxStatus` plus optional blind-write versions. Verifier results and status-only lookup adapters have no version payload.
 
-Managers validate nested status/reference and reject version payloads on noncommitted results. Tracking matches block number, transaction position and transaction ID. Dropping an untracked/duplicate response removes its entire result, including versions. Accounting counts result entries plus checkpoint feedback, never version keys.
+Managers track transactions by block number and transaction position. Dropping an untracked/duplicate response removes its entire result, including versions. Accounting counts result entries plus checkpoint feedback, never version keys.
 
-Results are queued before dependency nodes are released. Pending Coordinator resubmissions retain this ordering. Version collection and event assembly are a subsequent change.
+Results are queued before dependency nodes are released. Pending Coordinator resubmissions retain this ordering.

@@ -357,26 +357,6 @@ func TestRelayDrainWaitsForRejectedTxs(t *testing.T) {
 	require.Equal(t, int64(100), r.waitingTxsSlots.Load(t))
 }
 
-func TestRelayRejectsMalformedResults(t *testing.T) {
-	t.Parallel()
-	for _, batch := range []*servicepb.TxStatusBatch{
-		nil,
-		{TxResult: []*servicepb.TxResult{nil}},
-		{TxResult: []*servicepb.TxResult{{}}},
-		{TxResult: []*servicepb.TxResult{{Status: &committerpb.TxStatus{}}}},
-		{TxResult: []*servicepb.TxResult{{
-			Status:             committerpb.NewTxStatus(committerpb.Status_ABORTED_MVCC_CONFLICT, "bad", 10, 0),
-			BlindWriteVersions: []*committerpb.NamespaceWriteVersions{{NsId: "1"}},
-		}}},
-	} {
-		incoming := make(chan *servicepb.TxStatusBatch, 1)
-		incoming <- batch
-		close(incoming)
-		r := &relay{}
-		require.Error(t, r.processStatusBatch(t.Context(), incoming))
-	}
-}
-
 // TestRelayHeldCheckpointReleasesSlot verifies that held checkpoint feedback releases the slot
 // its checkpoint took, since a held checkpoint returns no status.
 func TestRelayHeldCheckpointReleasesSlot(t *testing.T) {

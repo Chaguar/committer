@@ -235,8 +235,10 @@ func (e *coordinatorTestEnv) createNamespaces(t *testing.T, blkNum int, nsIDs ..
 			txStatus, receiveErr := e.csStream.Recv()
 			require.NoError(t, receiveErr)
 			require.NotNil(t, txStatus)
-			require.NotNil(t, txStatus.GetStatuses())
-			status = append(status, txStatus.GetStatuses()...)
+			require.NotNil(t, txStatus.TxResult)
+			for _, result := range txStatus.TxResult {
+				status = append(status, result.Status)
+			}
 			return len(status) == len(b.Txs)
 		}, 2*time.Minute, 10*time.Millisecond)
 
@@ -866,7 +868,7 @@ func statusExistsForNonDuplicateTxID(t *testing.T, vc *mock.VcService, expectedS
 		TxIds: persistedTxIDs,
 	})
 	require.NoError(t, err)
-	test.RequireProtoElementsMatch(t, persistedExpectedStatuses, actualStatuses.GetStatuses())
+	test.RequireProtoElementsMatch(t, servicepb.NewTxResults(persistedExpectedStatuses), actualStatuses.TxResult)
 }
 
 func TestCoordinatorStreamFailureWithSidecar(t *testing.T) {
@@ -963,7 +965,9 @@ func (e *coordinatorTestEnv) receiveStatus(t *testing.T, count int) []*committer
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		txStatus, err := e.csStream.Recv()
 		require.NoError(c, err)
-		status = append(status, txStatus.GetStatuses()...)
+		for _, result := range txStatus.TxResult {
+			status = append(status, result.Status)
+		}
 		require.Len(c, status, count)
 	}, time.Minute, 500*time.Millisecond)
 	return status
@@ -1132,7 +1136,7 @@ func TestWaitingTxsCountReturnsToZeroForHeldCheckpoint(t *testing.T) {
 	// The feedback arrives carrying no per-TX status.
 	held, err := env.csStream.Recv()
 	require.NoError(t, err)
-	require.Empty(t, held.GetStatuses())
+	require.Empty(t, held.TxResult)
 	require.NotNil(t, held.CheckpointFeedback)
 	require.Equal(t, servicepb.CheckpointFeedback_HOLD, held.CheckpointFeedback.Signal)
 	require.Equal(t, cpRef.TxId, held.CheckpointFeedback.Ref.GetTxId())
@@ -1158,7 +1162,9 @@ func readTxStatus(t *testing.T, stream servicepb.Coordinator_BlockProcessingClie
 	for len(actualTxsStatus) < count {
 		txStatus, err := stream.Recv()
 		require.NoError(t, err)
-		actualTxsStatus = append(actualTxsStatus, txStatus.GetStatuses()...)
+		for _, result := range txStatus.TxResult {
+			actualTxsStatus = append(actualTxsStatus, result.Status)
+		}
 	}
 	return actualTxsStatus
 }

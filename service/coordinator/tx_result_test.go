@@ -9,11 +9,11 @@ package coordinator
 import (
 	"context"
 	"io"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/Chaguar/common/api/committerpb"
+	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Chaguar/committer/api/servicepb"
@@ -65,14 +65,14 @@ func TestValidatorCommitterFiltersWholeResults(t *testing.T) {
 			Writes: []*committerpb.CommittedWriteVersion{{Key: []byte("k"), Version: 0}},
 		}},
 	}
-	wrong := &servicepb.TxResult{
-		Status: committerpb.NewTxStatus(committerpb.Status_COMMITTED, "wrong", 10, 0),
+	untracked := &servicepb.TxResult{
+		Status: committerpb.NewTxStatus(committerpb.Status_COMMITTED, "untracked", 10, 1),
 		BlindWriteVersions: []*committerpb.NamespaceWriteVersions{{
 			NsId:   "1",
 			Writes: []*committerpb.CommittedWriteVersion{{Key: []byte("wrong"), Version: 9}},
 		}},
 	}
-	stream := &vcResultStream{batch: &servicepb.TxStatusBatch{TxResult: []*servicepb.TxResult{wrong, good}}}
+	stream := &vcResultStream{batch: &servicepb.TxStatusBatch{TxResult: []*servicepb.TxResult{untracked, good, good}}}
 	nodes := make(chan dependencygraph.TxNodeBatch, 1)
 	statuses := newTxStatusQueue(1)
 	err := vc.receiveStatusAndForwardToOutput(t.Context(), stream, channel.NewWriter(t.Context(), nodes), statuses)
@@ -83,21 +83,6 @@ func TestValidatorCommitterFiltersWholeResults(t *testing.T) {
 	require.Same(t, good, batch.TxResult[0])
 	require.Equal(t, dependencygraph.TxNodeBatch{node}, <-nodes)
 	require.Zero(t, vc.txBeingValidated.Count())
-}
-
-func TestVerifierResultRequiresFullReference(t *testing.T) {
-	t.Parallel()
-	node := &dependencygraph.TransactionNode{VCTx: &servicepb.VcTx{Ref: committerpb.NewTxRef("tracked", 10, 0)}}
-	height := *servicepb.NewHeightFromTxRef(node.VCTx.Ref)
-	sv := &signatureVerifier{
-		txMu:             &sync.Mutex{},
-		txBeingValidated: map[servicepb.Height]*dependencygraph.TransactionNode{height: node},
-	}
-	results := &servicepb.TxStatusBatch{TxResult: servicepb.NewTxResults([]*committerpb.TxStatus{
-		committerpb.NewTxStatus(committerpb.Status_COMMITTED, "wrong", 10, 0),
-	})}
-	require.Empty(t, sv.fetchAndDeleteTxBeingValidated(results))
-	require.Same(t, node, sv.txBeingValidated[height])
 }
 
 func TestPendingResultForwardedBeforeDependencyRelease(t *testing.T) {
@@ -117,10 +102,13 @@ func TestPendingResultForwardedBeforeDependencyRelease(t *testing.T) {
 	stream := &vcResultStream{batch: &servicepb.TxStatusBatch{TxResult: []*servicepb.TxResult{result}}}
 	nodes := make(chan dependencygraph.TxNodeBatch)
 	statuses := newTxStatusQueue(0)
-	test.RunServiceForTest(ctx, t, func(ctx context.Context) error {
-		err := vc.receiveStatusAndForwardToOutput(ctx, stream, channel.NewWriter(ctx, nodes), statuses)
-		require.ErrorIs(t, err, io.EOF)
-		return nil
+	var receiveErr error
+	done := test.RunServiceForTest(ctx, t, func(ctx context.Context) error {
+		receiveErr = vc.receiveStatusAndForwardToOutput(ctx, stream, channel.NewWriter(ctx, nodes), statuses)
+		if errors.Is(receiveErr, io.EOF) {
+			return nil
+		}
+		return receiveErr
 	}, nil)
 	// Both outputs are unbuffered. Releasing nodes first would deadlock before this read.
 	batch, ok := statuses.read(ctx)
@@ -129,24 +117,6 @@ func TestPendingResultForwardedBeforeDependencyRelease(t *testing.T) {
 	released, ok := channel.NewReader(ctx, nodes).Read()
 	require.True(t, ok)
 	require.Equal(t, dependencygraph.TxNodeBatch{node}, released)
-}
-
-func TestValidatorCommitterRejectsMalformedResults(t *testing.T) {
-	t.Parallel()
-	for _, batch := range []*servicepb.TxStatusBatch{
-		nil,
-		{TxResult: []*servicepb.TxResult{nil}},
-		{TxResult: []*servicepb.TxResult{{}}},
-		{TxResult: []*servicepb.TxResult{{Status: &committerpb.TxStatus{}}}},
-		{TxResult: []*servicepb.TxResult{{
-			Status:             committerpb.NewTxStatus(committerpb.Status_ABORTED_MVCC_CONFLICT, "bad", 10, 0),
-			BlindWriteVersions: []*committerpb.NamespaceWriteVersions{{NsId: "1"}},
-		}}},
-	} {
-		vc := &validatorCommitter{}
-		err := vc.receiveStatusAndForwardToOutput(t.Context(), &vcResultStream{batch: batch},
-			channel.NewWriter(t.Context(), make(chan dependencygraph.TxNodeBatch, 1)), newTxStatusQueue(1))
-		require.Error(t, err)
-		require.NotErrorIs(t, err, io.EOF)
-	}
+	require.True(t, done.WaitForReady(ctx))
+	require.ErrorIs(t, receiveErr, io.EOF)
 }

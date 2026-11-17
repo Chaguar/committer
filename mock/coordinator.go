@@ -199,7 +199,7 @@ func (c *Coordinator) sendTxsStatusChunk(
 	txs []*committerpb.TxStatus,
 ) error {
 	b := &servicepb.TxStatusBatch{
-		TxResult: servicepb.NewTxResults(make([]*committerpb.TxStatus, len(txs))),
+		TxResult: make([]*servicepb.TxResult, len(txs)),
 	}
 	c.txsStatusMu.Lock()
 	defer c.txsStatusMu.Unlock()

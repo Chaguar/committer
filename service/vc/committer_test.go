@@ -412,7 +412,7 @@ func TestCommit(t *testing.T) { //nolint:maintidx // cannot improve.
 			channel.NewWriter(ctx, env.validatedTxs).Write(tt.txs)
 			txStatus, ok := channel.NewReader(ctx, env.txStatus).Read()
 			require.True(t, ok)
-			test.RequireProtoElementsMatch(t, tt.expectedTxStatuses, txStatus.GetStatuses())
+			test.RequireProtoElementsMatch(t, servicepb.NewTxResults(tt.expectedTxStatuses), txStatus.TxResult)
 			for _, result := range txStatus.TxResult {
 				if result.Status.Status != committerpb.Status_COMMITTED {
 					require.Empty(t, result.BlindWriteVersions)

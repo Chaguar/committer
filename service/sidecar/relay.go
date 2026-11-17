@@ -332,10 +332,6 @@ func receiveStatusFromCoordinator(
 			return errors.Wrap(err, "failed to receive statuses from the coordinator")
 		}
 
-		if err := response.ValidateResults(); err != nil {
-			return err
-		}
-
 		logger.Debugf("Received status batch (%d updates) from coordinator", len(response.GetTxResult()))
 
 		txsStatus.Write(response)
@@ -354,10 +350,6 @@ func (r *relay) processStatusBatch(
 		tStatus, readOK := txsStatus.Read()
 		if !readOK {
 			return errors.Wrap(ctx.Err(), "context ended")
-		}
-
-		if err := tStatus.ValidateResults(); err != nil {
-			return err
 		}
 
 		// Handle feedback separately because a held or halted checkpoint has no status.
@@ -404,8 +396,7 @@ func (r *relay) processStatusBatch(
 				continue
 			}
 
-			err := blkWithStatus.setFinalStatus(txStatus.Ref.TxNum, txStatus.Status)
-			if err != nil {
+			if err := blkWithStatus.setFinalStatus(txStatus.Ref.TxNum, txStatus.Status); err != nil {
 				// This can never occur unless there is a bug in the relay or the coordinator.
 				return err
 			}

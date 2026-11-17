@@ -117,7 +117,7 @@ func (v *VcService) GetTransactionsStatus(
 	_ context.Context,
 	query *committerpb.TxIDsBatch,
 ) (*servicepb.TxStatusBatch, error) {
-	s := &servicepb.TxStatusBatch{TxResult: servicepb.NewTxResults(make([]*committerpb.TxStatus, 0, len(query.TxIds)))}
+	s := &servicepb.TxStatusBatch{TxResult: make([]*servicepb.TxResult, 0, len(query.TxIds))}
 	v.txsStatusMu.Lock()
 	defer v.txsStatusMu.Unlock()
 	for _, id := range query.TxIds {

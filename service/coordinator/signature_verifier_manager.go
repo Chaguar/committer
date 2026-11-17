@@ -281,10 +281,6 @@ func (sv *signatureVerifier) receiveStatusAndForwardToOutput(
 			return classifyStreamRecvError(err)
 		}
 
-		if err := response.ValidateResults(); err != nil {
-			return err
-		}
-
 		logger.Debugf("New batch came from sv to sv manager, contains %d items", len(response.TxResult))
 
 		validatedTxs := sv.fetchAndDeleteTxBeingValidated(response)
@@ -311,7 +307,7 @@ func (sv *signatureVerifier) fetchAndDeleteTxBeingValidated(
 		resp := result.Status
 		k := *servicepb.NewHeightFromTxRef(resp.Ref)
 		txNode, ok := sv.txBeingValidated[k]
-		if !ok || txNode.VCTx.Ref.TxId != resp.Ref.TxId {
+		if !ok {
 			continue
 		}
 		delete(sv.txBeingValidated, k)

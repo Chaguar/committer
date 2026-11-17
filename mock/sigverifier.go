@@ -145,7 +145,7 @@ func (m *VerifierStreamState) sendResponseBatch(
 			break
 		}
 		respBatch := &servicepb.TxStatusBatch{
-			TxResult: servicepb.NewTxResults(make([]*committerpb.TxStatus, 0, len(reqBatch.Requests))),
+			TxResult: make([]*servicepb.TxResult, 0, len(reqBatch.Requests)),
 		}
 
 		for i, req := range reqBatch.Requests {

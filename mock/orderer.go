@@ -115,7 +115,11 @@ type (
 	blockCache struct {
 		storage           []*common.Block
 		maxDeliveredBlock int64
-		mu                *sync.Cond
+		// readerPositions holds the next block number each open Deliver stream will read. A block
+		// is kept until every open stream has read past it, so a client that reads with several
+		// streams (e.g., data and header-only) does not lose blocks to its fastest stream.
+		readerPositions map[uint64]uint64
+		mu              *sync.Cond
 	}
 )
 
@@ -275,7 +279,9 @@ func (o *Orderer) Deliver(stream ab.AtomicBroadcast_DeliverServer) error {
 	defer stop()
 
 	var p testcrypto.BlockPrepareParameters
+	defer o.cache.removeReader(state.Index)
 	for i := start; i <= end && ctx.Err() == nil; i++ {
+		o.cache.setReaderPosition(state.Index, i)
 		b, err := o.cache.getBlock(ctx, i)
 		if err != nil && !errors.Is(err, ErrLostBlock) {
 			return grpcerror.WrapCancelled(err)
@@ -546,6 +552,7 @@ func newBlockCache(size int) *blockCache {
 	return &blockCache{
 		storage:           make([]*common.Block, size),
 		maxDeliveredBlock: -1,
+		readerPositions:   make(map[uint64]uint64),
 		mu:                sync.NewCond(&sync.Mutex{}),
 	}
 }
@@ -566,8 +573,7 @@ func (c *blockCache) addBlock(ctx context.Context, b *common.Block) bool {
 	c.mu.L.Lock()
 	defer c.mu.L.Unlock()
 	// We ensure that we don't overwrite a block that haven't been delivered yet.
-	//nolint:gosec // integer overflow conversion uint64 -> int64
-	for c.storage[blockIndex] != nil && int64(c.storage[blockIndex].Header.Number) > c.maxDeliveredBlock {
+	for c.storage[blockIndex] != nil && !c.isReleased(c.storage[blockIndex].Header.Number) {
 		if ctx.Err() != nil {
 			return false
 		}
@@ -577,6 +583,39 @@ func (c *blockCache) addBlock(ctx context.Context, b *common.Block) bool {
 	// Wakeup all waiting to get blocks.
 	c.mu.Broadcast()
 	return true
+}
+
+// isReleased returns true if a block may be overwritten: it was delivered, and no open stream
+// still has to read it. Must be called with the lock held.
+func (c *blockCache) isReleased(blockNum uint64) bool {
+	//nolint:gosec // integer overflow conversion uint64 -> int64
+	if int64(blockNum) > c.maxDeliveredBlock {
+		return false
+	}
+	for _, next := range c.readerPositions {
+		if next <= blockNum {
+			return false
+		}
+	}
+	return true
+}
+
+// setReaderPosition records the next block number a stream will read.
+func (c *blockCache) setReaderPosition(readerID, nextBlockNum uint64) {
+	c.mu.L.Lock()
+	defer c.mu.L.Unlock()
+	c.readerPositions[readerID] = nextBlockNum
+	// Wakeup all waiting to add blocks.
+	c.mu.Broadcast()
+}
+
+// removeReader stops a closed stream from holding back the blocks it has not read.
+func (c *blockCache) removeReader(readerID uint64) {
+	c.mu.L.Lock()
+	defer c.mu.L.Unlock()
+	delete(c.readerPositions, readerID)
+	// Wakeup all waiting to add blocks.
+	c.mu.Broadcast()
 }
 
 func (c *blockCache) getBlock(ctx context.Context, blockNum uint64) (*common.Block, error) {

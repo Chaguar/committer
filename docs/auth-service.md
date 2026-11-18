@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 # Authentication & Authorization Service (ACL)
 
 The `auth` service is a central Authentication & Authorization Service (`AuthService`) that guards the
-gRPC APIs exposed by Committer-X. It authenticates a client once and issues a short-lived,
+gRPC APIs exposed by the Chaguar Committer. It authenticates a client once and issues a short-lived,
 certificate-bound opaque token; resource servers (Query, Sidecar) then authorize each RPC by
 delegating to the `AuthService`. This decouples the one-time, expensive signature verification from
 the many cheap per-call authorization checks, and works behind client-side load balancing because the

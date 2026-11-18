@@ -14,11 +14,10 @@ import (
 	"github.com/Chaguar/common/api/applicationpb"
 	"github.com/Chaguar/common/common/channelconfig"
 	"github.com/Chaguar/common/protoutil"
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
 	"github.com/hyperledger/fabric-lib-go/bccsp/factory"
 	"github.com/jackc/puddle/v2"
-
-	"github.com/Chaguar/common/utils/retry"
 
 	"github.com/Chaguar/committer/utils/monitoring/promutil"
 	"github.com/Chaguar/committer/utils/statedb"
@@ -42,7 +41,7 @@ type configProvider struct {
 // run reads the configuration now, then every interval.
 func (p *configProvider) run(ctx context.Context, interval time.Duration) error {
 	if err := p.refresh(ctx); err != nil {
-		logger.Warnf("Initial channel-configuration load failed (will retry): %v", err)
+		logger.Warnf("Initial channel-configuration load failed (will retry): %+v", err)
 	}
 
 	ticker := time.NewTicker(interval)
@@ -53,7 +52,7 @@ func (p *configProvider) run(ctx context.Context, interval time.Duration) error 
 			return nil
 		case <-ticker.C:
 			if err := p.refresh(ctx); err != nil {
-				logger.Errorf("Channel-configuration refresh failed: %v", err)
+				logger.Errorf("Channel-configuration refresh failed: %+v", err)
 			}
 		}
 	}

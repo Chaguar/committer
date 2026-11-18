@@ -295,7 +295,7 @@ func (s *Service) sweepExpiredRecords(ctx context.Context) error {
 		case <-ticker.C:
 			deletedTokens, deletedNonces, err := s.db.deleteExpired(ctx, time.Now())
 			if err != nil {
-				logger.Errorf("Sweeping expired records failed: %v", err)
+				logger.Errorf("Sweeping expired records failed: %+v", err)
 			} else if deletedTokens+deletedNonces > 0 {
 				logger.Infof("Swept %d expired tokens and %d expired nonces", deletedTokens, deletedNonces)
 			}

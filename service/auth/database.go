@@ -13,14 +13,13 @@ import (
 	"encoding/base64"
 	"time"
 
+	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
 	"github.com/jackc/puddle/v2"
 	"github.com/yugabyte/pgx/v5"
 	"github.com/yugabyte/pgx/v5/pgconn"
 	"github.com/yugabyte/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
-
-	"github.com/Chaguar/common/utils/retry"
 
 	"github.com/Chaguar/committer/api/servicepb"
 )

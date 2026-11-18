@@ -182,8 +182,7 @@ func seedConfigTransaction(t *testing.T, dbConf *statedb.Config, block *common.B
 	pool, err := statedb.NewPool(t.Context(), dbConf)
 	require.NoError(t, err)
 	defer pool.Close()
-	_, err = pool.Exec(t.Context(),
+	require.NoError(t, statedb.ExecuteSQL(t.Context(), dbConf.Retry, pool,
 		"INSERT INTO "+statedb.TableName(committerpb.ConfigNamespaceID)+" (key, value, version) VALUES ($1, $2, 0)",
-		[]byte(committerpb.ConfigKey), envelopeBytes)
-	require.NoError(t, err)
+		[]byte(committerpb.ConfigKey), envelopeBytes))
 }

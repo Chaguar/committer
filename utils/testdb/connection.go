@@ -13,7 +13,6 @@ import (
 	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
-	"github.com/jackc/puddle/v2"
 	"github.com/yugabyte/pgx/v5/pgxpool"
 
 	"github.com/Chaguar/committer/utils"
@@ -143,9 +142,5 @@ func (c *Connection) execute(ctx context.Context, stmt string) error {
 		return err
 	}
 	defer pool.Close()
-
-	return retry.Execute(ctx, DefaultRetry, func() error {
-		_, err := pool.Exec(ctx, stmt)
-		return errors.Wrapf(err, "failed to execute the SQL statement [%s]", stmt)
-	}, puddle.ErrClosedPool)
+	return statedb.ExecuteSQL(ctx, DefaultRetry, pool, stmt)
 }

@@ -16,7 +16,6 @@ import (
 	"github.com/Chaguar/common/api/committerpb"
 	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
-	"github.com/jackc/puddle/v2"
 	"github.com/yugabyte/pgx/v5"
 	"github.com/yugabyte/pgx/v5/pgxpool"
 
@@ -198,10 +197,7 @@ func (d *database) setLastCommittedBlockNumber(ctx context.Context, bInfo *servi
 	//       and standard comparison operators.
 	v := make([]byte, 8)
 	binary.BigEndian.PutUint64(v, bInfo.Number)
-	return retry.Execute(ctx, d.retryProfile, func() error {
-		_, err := d.pool.Exec(ctx, setMetadataPrepSQLStmt, lastCommittedBlockNumberKey, v)
-		return errors.Wrapf(err, "failed to execute the SQL statement [%s]", setMetadataPrepSQLStmt)
-	}, puddle.ErrClosedPool)
+	return statedb.ExecuteSQL(ctx, d.retryProfile, d.pool, setMetadataPrepSQLStmt, lastCommittedBlockNumberKey, v)
 }
 
 // commit commits the writes to the database.

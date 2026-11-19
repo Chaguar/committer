@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestForestTopoSort(t *testing.T) {
+func TestConflictSetArrivalOrder(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
@@ -30,9 +30,10 @@ func TestForestTopoSort(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			keys := makeTestKeys(t, len(tc.deps))
-			f := &forest{}
+			f := &conflictSet{}
 			for i, deps := range tc.deps {
 				tx := createTxNode(t, nil, [][]byte{keys[i]}, nil)
+				tx.seq = uint64(i)
 				for _, dep := range deps {
 					tx.addDependenciesAndUpdateDependents(TxNodeBatch{f.txs[dep]})
 				}
@@ -42,12 +43,16 @@ func TestForestTopoSort(t *testing.T) {
 			want := slices.Clone(f.txs)
 			// Membership order must not determine execution order.
 			slices.Reverse(f.txs)
-			requireForest(t, f.topoSort(), want...)
+			got := f.arrivalOrder()
+			requireConflictSet(t, got, want...)
+			for i, tx := range want {
+				require.Same(t, tx, f.txs[len(want)-1-i], "sorting must not mutate membership")
+			}
 		})
 	}
 }
 
-func BenchmarkForestTopoSort(b *testing.B) {
+func BenchmarkConflictSetArrivalOrder(b *testing.B) {
 	chainParents := make([]int, 999)
 	for i := range chainParents {
 		chainParents[i] = i
@@ -55,51 +60,60 @@ func BenchmarkForestTopoSort(b *testing.B) {
 	for _, tc := range []struct {
 		name    string
 		parents []int
+		reverse bool
 	}{
 		{name: "fan out", parents: make([]int, 999)},
 		{name: "chain", parents: chainParents},
+		{name: "fan out reversed", parents: make([]int, 999), reverse: true},
+		{name: "chain reversed", parents: chainParents, reverse: true},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			f := &forest{txs: make(TxNodeBatch, 1000)}
+			f := &conflictSet{txs: make(TxNodeBatch, 1000)}
 			f.txs[0] = &TransactionNode{}
 			for i, parent := range tc.parents {
-				f.txs[i+1] = &TransactionNode{dependsOnTxs: TxNodeBatch{f.txs[parent]}}
+				f.txs[i+1] = &TransactionNode{seq: uint64(i + 1), dependsOnTxs: TxNodeBatch{f.txs[parent]}}
+			}
+			if tc.reverse {
+				slices.Reverse(f.txs)
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				f.topoSort()
+				f.arrivalOrder()
 			}
 		})
 	}
 }
 
-func TestForestAbsorb(t *testing.T) {
+func TestConflictSetAbsorb(t *testing.T) {
 	t.Parallel()
 	keys := makeTestKeys(t, 3)
 	a := createTxNode(t, nil, [][]byte{keys[0]}, nil)
 	b := createTxNode(t, nil, [][]byte{keys[1]}, nil)
 	c := createTxNode(t, nil, [][]byte{keys[2]}, nil)
 
-	inFlight := newForest(c)
-	inFlight.inFlight = true
+	inFlight := newConflictSet(c)
+	inFlight.pending = 1
 
-	fa := newForest(a)
-	fb := newForest(b)
+	fa := newConflictSet(a)
+	fb := newConflictSet(b)
 	fb.addDependency(inFlight)
 
 	fa.absorb(fb)
 
 	require.ElementsMatch(t, TxNodeBatch{a, b}, fa.txs)
-	require.Same(t, fa, b.forest)
-	require.Contains(t, fa.dependsOnForests, inFlight)
-	require.Contains(t, inFlight.dependentForests, fa)
-	require.NotContains(t, inFlight.dependentForests, fb)
+	require.Same(t, fa, b.conflictSet)
+	require.Contains(t, fa.dependsOnConflictSets, inFlight)
+	require.Contains(t, inFlight.dependentConflictSets, fa)
+	require.NotContains(t, inFlight.dependentConflictSets, fb)
 }
 
-// requireForest asserts exact membership and that prerequisites precede their dependents.
-func requireForest(t *testing.T, got TxNodeBatch, want ...*TransactionNode) {
+// requireConflictSet asserts exact membership and that prerequisites precede their dependents.
+func requireConflictSet(t *testing.T, got TxNodeBatch, want ...*TransactionNode) {
 	t.Helper()
-	require.ElementsMatch(t, want, got)
+	require.Len(t, got, len(want))
+	for i, tx := range want {
+		require.Same(t, tx, got[i], "arrival order must be preserved")
+	}
 	position := make(map[*TransactionNode]int, len(got))
 	for i, tx := range got {
 		position[tx] = i

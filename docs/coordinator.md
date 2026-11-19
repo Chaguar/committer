@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 5.  [Dependency Graph Management](#5-dependency-graph-management)
     * [A. Dependency Types](#a-dependency-types)
     * [B. Identifying Dependency-Free Transactions](#b-identifying-dependency-free-transactions)
+    * [C. Conflict-Set Manager for External Consumers](#c-conflict-set-manager-for-external-consumers)
 6.  [gRPC Service API](#6-grpc-service-api)
 7.  [Failure and Recovery](#7-failure-and-recovery)
 
@@ -165,6 +166,46 @@ committed before $T_i$, preventing $T_j$'s write from being overwritten and lost
 
 Transactions that have no outgoing edges in the graph (an out-degree of zero) have no outstanding dependencies. These are the transactions that the Coordinator
 identifies and sends out for parallel validation and commit.
+
+### C. Conflict-Set Manager for External Consumers
+
+The dependencygraph package also exports `ConflictSetManager` and `ConflictSetParameters`.
+Unlike the coordinator's transaction-batch managers, it emits `[]TxNodeBatch` through
+`OutgoingDepFreeConflictSets`. It is not wired into the coordinator.
+
+A conflict set groups transactions connected directly or transitively by read-write, write-read,
+or write-write conflicts; members need not conflict pairwise. Waiting sets can grow and merge.
+An emitted set is frozen until every member is validated. Transactions depending on any member
+wait for the entire set, and detector entries remain until the set completes.
+
+Each emitted set follows batch-ID order, then transaction order within each batch. This is
+already topological because prerequisites always precede their dependents. Block and transaction
+numbers are not consulted. Separate sets may execute concurrently; feedback timing can change
+set boundaries and cross-set execution order. This ordering does not compensate for missing
+read/write dependencies in the consumer's transaction descriptions.
+
+The consumer owns both emitted slice levels, but nodes remain shared. It must sequence execution
+within each set and report every member exactly once, in any grouping. Rejected nodes, duplicate
+feedback, and feedback for waiting sets are ignored. Missing feedback stalls dependent sets and
+prevents the corresponding waiting slots from being released. The package does not cap conflict-set
+size; consumers control admission and execution chunking. A small input batch alone does not bound
+a waiting set that grows across batches.
+
+The conflict-set manager maintains the shared graph-size, dependency-free backlog, dependent
+transaction, and processed-transaction metrics. The validated counter counts newly accepted
+feedback, while graph size drops only when a whole set completes. The dependency-free backlog
+includes both ready sets and a batch held by a blocked output writer until a successful send.
+Both constructor and validation lock-wait histograms are observed. The other seven global graph
+stage-duration histograms remain `Manager`-only; their empty series in conflict-set mode do not
+indicate zero processing time.
+
+Conflict-set mode also exposes `coordinator_global_dependency_graph_active_conflict_sets` and
+`coordinator_global_dependency_graph_oldest_active_conflict_set_age_seconds`. A set becomes active
+when the manager freezes and queues it for emission, not when the output channel accepts it.
+Age includes output backlog and remains live during partial validation. Both gauges are computed
+at scrape time under the manager lock; oldest age scans the active sets. Completion removes the
+set from tracking, and an idle manager reports zero age. These metrics are diagnostic only:
+no timer, timeout, or automatic recovery is introduced. See [metrics reference](metrics_reference.md).
 
 ## 6. gRPC Service API
 

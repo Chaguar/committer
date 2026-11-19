@@ -10,6 +10,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestOutputSignalBeforeWait(t *testing.T) {
@@ -18,9 +20,7 @@ func TestOutputSignalBeforeWait(t *testing.T) {
 	signal.signal()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if !signal.wait(ctx) {
-		t.Fatal("signal before wait was lost")
-	}
+	require.True(t, signal.wait(ctx), "signal before wait was lost")
 }
 
 func TestOutputSignalCoalesces(t *testing.T) {
@@ -31,15 +31,11 @@ func TestOutputSignalCoalesces(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if !signal.wait(ctx) {
-		t.Fatal("pending signal was lost")
-	}
+	require.True(t, signal.wait(ctx), "pending signal was lost")
 	signal.cond.L.Lock()
 	pending := signal.pending
 	signal.cond.L.Unlock()
-	if pending {
-		t.Fatal("coalesced signal was not consumed")
-	}
+	require.False(t, pending, "coalesced signal was not consumed")
 }
 
 func TestOutputSignalRepeatedWakeups(t *testing.T) {
@@ -55,11 +51,9 @@ func TestOutputSignalRepeatedWakeups(t *testing.T) {
 		signal.signal()
 		select {
 		case ok := <-done:
-			if !ok {
-				t.Fatal("wake-up was lost")
-			}
+			require.True(t, ok, "wake-up was lost")
 		case <-ctx.Done():
-			t.Fatal("wait did not return")
+			require.FailNow(t, "wait did not return")
 		}
 	}
 }
@@ -76,11 +70,9 @@ func TestOutputSignalCancellation(t *testing.T) {
 		cancel()
 		select {
 		case ok := <-done:
-			if ok {
-				t.Fatal("cancelled wait reported a signal")
-			}
+			require.False(t, ok, "cancelled wait reported a signal")
 		case <-time.After(time.Second):
-			t.Fatal("cancellation did not wake waiter")
+			require.FailNow(t, "cancellation did not wake waiter")
 		}
 	}
 }
@@ -96,11 +88,9 @@ func TestOutputSignalWaitingCancellation(t *testing.T) {
 	}()
 	select {
 	case ok := <-done:
-		if ok {
-			t.Fatal("wait returned without a signal")
-		}
+		require.False(t, ok, "wait returned without a signal")
 	case <-time.After(time.Second):
-		t.Fatal("waiting cancellation did not wake waiter")
+		require.FailNow(t, "waiting cancellation did not wake waiter")
 	}
 }
 
@@ -110,7 +100,5 @@ func TestOutputSignalCancelledWithPendingSignal(t *testing.T) {
 	signal.signal()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if signal.wait(ctx) {
-		t.Fatal("cancelled wait consumed pending signal")
-	}
+	require.False(t, signal.wait(ctx), "cancelled wait consumed pending signal")
 }

@@ -62,9 +62,11 @@ type (
 		waitForKeysCount uint64
 		waitingKeys      []*waiting
 
-		// Used by the forest dependency manager.
-		// forest is the forest this transaction belongs to.
-		forest *forest
+		// Used by the conflict set dependency manager.
+		// conflictSet is nil before admission and after the set completes.
+		conflictSet *conflictSet
+		// seq is the manager-local arrival order, independent of block and transaction numbers.
+		seq uint64
 		// validated is set once the validation status of this transaction is received.
 		validated bool
 	}

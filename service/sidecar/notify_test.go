@@ -20,6 +20,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go-apiv2/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/Chaguar/committer/api/servicepb"
@@ -785,5 +786,224 @@ func createTestTx(txID string, idx uint32, namespacesIDs ...string) *servicepb.T
 			Endorsements: endorsements,
 			Metadata:     [][]byte{[]byte("metadata")},
 		},
+	}
+}
+
+func TestCommittedVersions(t *testing.T) {
+	t.Parallel()
+	block := versionTestBlock()
+	key := []byte{0, 255}
+	block.txs[0].Content.Namespaces[0].BlindWrites[0].Key = key
+	block.blindWriteVersions[0][0].Writes[0].Key = key
+
+	stream := &blockStream{includeReadWriteSets: true}
+	events := stream.filterAndBuildEvents(block)
+
+	require.Len(t, events, 1)
+	test.RequireProtoElementsMatch(t, []*committerpb.NamespaceWriteVersions{
+		{
+			NsId: "1",
+			Writes: []*committerpb.CommittedWriteVersion{
+				{Key: []byte("rw"), Version: 3},
+				{Key: key, Version: 4},
+			},
+		},
+		{
+			NsId: "2",
+			Writes: []*committerpb.CommittedWriteVersion{
+				{Key: []byte("rw"), Version: 0},
+				{Key: []byte("bw"), Version: 0},
+			},
+		},
+	}, events[0].CommittedWriteVersions)
+}
+
+func TestCommittedVersionSubscriberIsolation(t *testing.T) {
+	t.Parallel()
+	block := versionTestBlock()
+	before := proto.Clone(block.txs[0].Content)
+
+	a := &blockStream{includeReadWriteSets: true, filterNamespaces: []string{"1", "1"}}
+	b := &blockStream{includeReadWriteSets: true, filterNamespaces: []string{"2"}}
+	eventsA := a.filterAndBuildEvents(block)
+	eventsB := b.filterAndBuildEvents(block)
+
+	require.Len(t, eventsA[0].CommittedWriteVersions, 1)
+	require.Len(t, eventsB[0].CommittedWriteVersions, 1)
+	require.Equal(t, "2", eventsB[0].CommittedWriteVersions[0].NsId)
+
+	eventsA[0].CommittedWriteVersions[0].Writes[0].Version = 99
+	require.Zero(t, eventsB[0].CommittedWriteVersions[0].Writes[0].Version)
+	require.True(t, proto.Equal(before, block.txs[0].Content))
+	require.EqualValues(t, 4, block.blindWriteVersions[0][0].Writes[0].Version)
+}
+
+func TestCommittedVersionOmission(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name             string
+		status           committerpb.Status
+		include          bool
+		expectedVersions []*committerpb.NamespaceWriteVersions
+	}{
+		{
+			name: "committed-with-versions", status: committerpb.Status_COMMITTED, include: true,
+			expectedVersions: []*committerpb.NamespaceWriteVersions{
+				{NsId: "1", Writes: []*committerpb.CommittedWriteVersion{
+					{Key: []byte("rw"), Version: 3}, {Key: []byte("bw"), Version: 4},
+				}},
+				{NsId: "2", Writes: []*committerpb.CommittedWriteVersion{
+					{Key: []byte("rw"), Version: 0}, {Key: []byte("bw"), Version: 0},
+				}},
+			},
+		},
+		{name: "committed-without-inclusion", status: committerpb.Status_COMMITTED},
+		{name: "mvcc-abort-with-inclusion", status: committerpb.Status_ABORTED_MVCC_CONFLICT, include: true},
+		{name: "mvcc-abort-without-inclusion", status: committerpb.Status_ABORTED_MVCC_CONFLICT},
+		{name: "signature-abort-with-inclusion", status: committerpb.Status_ABORTED_SIGNATURE_INVALID, include: true},
+		{name: "signature-abort-without-inclusion", status: committerpb.Status_ABORTED_SIGNATURE_INVALID},
+		{name: "duplicate-with-inclusion", status: committerpb.Status_REJECTED_DUPLICATE_TX_ID, include: true},
+		{name: "duplicate-without-inclusion", status: committerpb.Status_REJECTED_DUPLICATE_TX_ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			block := versionTestBlock()
+			block.statuses[0] = tc.status
+
+			events := (&blockStream{includeReadWriteSets: tc.include}).filterAndBuildEvents(block)
+
+			require.Len(t, events, 1)
+			test.RequireProtoElementsMatch(t, tc.expectedVersions, events[0].CommittedWriteVersions)
+		})
+	}
+}
+
+func TestCommittedVersionsWithoutBlindMetadata(t *testing.T) {
+	t.Parallel()
+	block := versionTestBlock()
+	block.blindWriteVersions[0] = nil
+
+	events := (&blockStream{includeReadWriteSets: true}).filterAndBuildEvents(block)
+
+	require.Len(t, events[0].CommittedWriteVersions, 2)
+	for _, ns := range events[0].CommittedWriteVersions {
+		require.Len(t, ns.Writes, 1)
+		require.Equal(t, []byte("rw"), ns.Writes[0].Key)
+	}
+
+	for _, ns := range block.txs[0].Content.Namespaces {
+		ns.BlindWrites = nil
+	}
+	events = (&blockStream{includeReadWriteSets: true}).filterAndBuildEvents(block)
+	require.Len(t, events[0].CommittedWriteVersions, 2)
+}
+
+func TestCommittedVersionsIgnoreUnmatchedMetadata(t *testing.T) {
+	t.Parallel()
+	block := versionTestBlock()
+	block.blindWriteVersions[0] = append(block.blindWriteVersions[0],
+		&committerpb.NamespaceWriteVersions{NsId: "unknown", Writes: []*committerpb.CommittedWriteVersion{
+			{Key: []byte("bw"), Version: 99},
+		}})
+
+	events := (&blockStream{includeReadWriteSets: true, filterNamespaces: []string{"2"}}).filterAndBuildEvents(block)
+
+	require.Len(t, events, 1)
+	require.Len(t, events[0].CommittedWriteVersions, 1)
+	require.Equal(t, "2", events[0].CommittedWriteVersions[0].NsId)
+	require.Zero(t, events[0].CommittedWriteVersions[0].Writes[1].Version)
+}
+
+func TestCommittedVersionsPreserveWriteOrder(t *testing.T) {
+	t.Parallel()
+	block := versionTestBlock()
+	ns := block.txs[0].Content.Namespaces[0]
+	ns.BlindWrites = append(ns.BlindWrites, &applicationpb.Write{Key: []byte("second")})
+	blind := block.blindWriteVersions[0]
+	blind[0].Writes = append([]*committerpb.CommittedWriteVersion{
+		{Key: []byte("second"), Version: 7},
+	}, blind[0].Writes...)
+	blind[0], blind[1] = blind[1], blind[0]
+
+	events := (&blockStream{includeReadWriteSets: true}).filterAndBuildEvents(block)
+
+	require.Len(t, events, 1)
+	require.Len(t, events[0].CommittedWriteVersions, 2)
+	test.RequireProtoEqual(t, &committerpb.NamespaceWriteVersions{
+		NsId: "1",
+		Writes: []*committerpb.CommittedWriteVersion{
+			{Key: []byte("rw"), Version: 3},
+			{Key: []byte("bw"), Version: 4},
+			{Key: []byte("second"), Version: 7},
+		},
+	}, events[0].CommittedWriteVersions[0])
+}
+
+func versionTestBlock() *committedBlockWithTxs {
+	return &committedBlockWithTxs{
+		header: &common.BlockHeader{Number: 1},
+		txs: []*servicepb.TxWithRef{{Ref: committerpb.NewTxRef("tx", 1, 0), Content: &applicationpb.Tx{
+			Namespaces: []*applicationpb.TxNamespace{
+				{
+					NsId: "1",
+					ReadWrites: []*applicationpb.ReadWrite{{
+						Key: []byte("rw"), Version: new(uint64(2)), Value: []byte("v"),
+					}},
+					BlindWrites: []*applicationpb.Write{{Key: []byte("bw"), Value: nil}},
+				},
+				{
+					NsId: "2", ReadWrites: []*applicationpb.ReadWrite{{Key: []byte("rw"), Value: []byte("new")}},
+					BlindWrites: []*applicationpb.Write{{Key: []byte("bw"), Value: []byte{}}},
+				},
+			},
+		}}},
+		statuses: []committerpb.Status{committerpb.Status_COMMITTED},
+		blindWriteVersions: [][]*committerpb.NamespaceWriteVersions{{
+			{
+				NsId:   "1",
+				Writes: []*committerpb.CommittedWriteVersion{{Key: []byte("bw"), Version: 4}},
+			},
+			{
+				NsId:   "2",
+				Writes: []*committerpb.CommittedWriteVersion{{Key: []byte("bw"), Version: 0}},
+			},
+		}},
+	}
+}
+
+func BenchmarkCommittedVersionsSubscribers(b *testing.B) {
+	for _, subscribers := range []int{1, 8, 32} {
+		for _, include := range []bool{false, true} {
+			b.Run(fmt.Sprintf("subscribers=%d/include=%t", subscribers, include), func(b *testing.B) {
+				benchmarkCommittedVersionSubscribers(b, subscribers, include)
+			})
+		}
+	}
+}
+
+func benchmarkCommittedVersionSubscribers(b *testing.B, subscribers int, include bool) {
+	b.Helper()
+	block := versionTestBlock()
+	tx := block.txs[0]
+	blind := block.blindWriteVersions[0]
+	block.txs = make([]*servicepb.TxWithRef, 100)
+	block.statuses = make([]committerpb.Status, 100)
+	block.blindWriteVersions = make([][]*committerpb.NamespaceWriteVersions, 100)
+	for i := range block.txs {
+		block.txs[i] = tx
+		block.statuses[i] = committerpb.Status_COMMITTED
+		block.blindWriteVersions[i] = blind
+	}
+
+	streams := make([]*blockStream, subscribers)
+	for i := range streams {
+		streams[i] = &blockStream{includeReadWriteSets: include}
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		for _, stream := range streams {
+			stream.filterAndBuildEvents(block)
+		}
 	}
 }

@@ -906,3 +906,20 @@ func verifyKeysNamespace(ns *applicationpb.TxNamespace) committerpb.Status {
 		Endorsements: dummyEndorsements(1),
 	})
 }
+
+func TestFinalStatusPublishesBlindVersions(t *testing.T) {
+	t.Parallel()
+	block := &blockWithStatus{
+		block:    &common.Block{Header: &common.BlockHeader{Number: 1}},
+		txStatus: make([]committerpb.Status, 1), blindWriteVersions: make([][]*committerpb.NamespaceWriteVersions, 1),
+	}
+	block.pendingCount.Store(1)
+	versions := versionTestBlock().blindWriteVersions[0]
+
+	require.NoError(t, block.setFinalStatus(0, committerpb.Status_COMMITTED, versions))
+	require.Zero(t, block.pendingCount.Load())
+	require.Equal(t, versions, block.blindWriteVersions[0])
+
+	require.ErrorContains(t, block.setFinalStatus(0, committerpb.Status_COMMITTED, nil), "two results for a TX")
+	require.Equal(t, versions, block.blindWriteVersions[0])
+}

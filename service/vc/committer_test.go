@@ -444,3 +444,154 @@ func commitLatency(t *testing.T, h *prometheus.HistogramVec, status string) floa
 	require.True(t, ok)
 	return test.GetMetricValue(t, child)
 }
+
+func TestLiveBlindWriteVersions(t *testing.T) {
+	t.Parallel()
+	env := newCommitterTestEnv(t)
+	env.dbEnv.populateData(t, []string{"1", "2"},
+		writes(false, state{"1", 1, 2}, state{"2", 1, 0}),
+		&servicepb.TxStatusBatch{}, transactionIDToHeight{})
+	initial := map[string]map[string]uint64{"1": {"key1.1": 3}, "2": {"key2.1": 1}}
+
+	for attempt := range 2 {
+		nsWrites := writes(true, state{"1", 1, 0}, state{"1", 2, 0}, state{"2", 1, 0})
+		nsWrites["1"].values[0] = nil
+		nsWrites["2"].append([]byte{0, 255}, []byte{}, 0)
+
+		batch, err := env.c.commitTransactions(t.Context(), env.dbEnv.DB,
+			blindValidated(TxID(string(rune('a'+attempt))), servicepb.NewHeight(10+uint64(attempt), 0), nsWrites))
+		require.NoError(t, err)
+		require.Len(t, batch.TxResult, 1)
+		result := batch.TxResult[0]
+		require.Equal(t, committerpb.Status_COMMITTED, result.Status.Status)
+		require.Len(t, result.BlindWriteVersions, 2)
+
+		count := 0
+		for _, ns := range result.BlindWriteVersions {
+			for _, write := range ns.Writes {
+				rows := env.dbEnv.FetchKeys(t, ns.NsId, [][]byte{write.Key})
+				require.Contains(t, rows, string(write.Key))
+				require.Equal(t, rows[string(write.Key)].Version, write.Version)
+				require.Equal(t, initial[ns.NsId][string(write.Key)]+uint64(attempt), write.Version)
+				count++
+			}
+		}
+		require.Equal(t, 4, count)
+	}
+}
+
+func TestCoordinatorResubmissionBlindVersions(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name            string
+		storedStatus    committerpb.Status
+		submittedHeight *servicepb.Height
+		initialVersion  uint64
+		initialWrites   namespaceToWrites
+		invalidStatus   *committerpb.Status
+		expectedStatus  committerpb.Status
+	}{
+		{
+			name: "committed", storedStatus: committerpb.Status_COMMITTED,
+			submittedHeight: servicepb.NewHeight(10, 0), initialVersion: 7,
+			expectedStatus: committerpb.Status_COMMITTED,
+		},
+		{
+			name: "version-zero", storedStatus: committerpb.Status_COMMITTED,
+			submittedHeight: servicepb.NewHeight(10, 0), expectedStatus: committerpb.Status_COMMITTED,
+		},
+		{
+			name: "invalidated", storedStatus: committerpb.Status_COMMITTED,
+			submittedHeight: servicepb.NewHeight(10, 0), initialVersion: 7,
+			invalidStatus: new(committerpb.Status_ABORTED_MVCC_CONFLICT), expectedStatus: committerpb.Status_COMMITTED,
+		},
+		{
+			name: "different-height", storedStatus: committerpb.Status_COMMITTED,
+			submittedHeight: servicepb.NewHeight(11, 0), initialVersion: 7,
+			expectedStatus: committerpb.Status_REJECTED_DUPLICATE_TX_ID,
+		},
+		{
+			name: "aborted", storedStatus: committerpb.Status_ABORTED_MVCC_CONFLICT,
+			submittedHeight: servicepb.NewHeight(10, 0), initialVersion: 7,
+			expectedStatus: committerpb.Status_ABORTED_MVCC_CONFLICT,
+		},
+		{
+			name: "missing-key", storedStatus: committerpb.Status_COMMITTED,
+			submittedHeight: servicepb.NewHeight(10, 0), initialWrites: make(namespaceToWrites),
+			expectedStatus: committerpb.Status_COMMITTED,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := newCommitterTestEnv(t)
+			seed := tc.initialWrites
+			if seed == nil {
+				seed = writes(false, state{"1", 1, tc.initialVersion})
+			}
+
+			persisted := committerpb.NewTxStatus(tc.storedStatus, "retry", 10, 0)
+			env.dbEnv.populateData(t, []string{"1"}, seed,
+				&servicepb.TxStatusBatch{TxResult: []*servicepb.TxResult{{Status: persisted}}},
+				transactionIDToHeight{"retry": servicepb.NewHeight(10, 0)})
+
+			key := []byte("key1.1")
+			before := env.dbEnv.FetchKeys(t, "1", [][]byte{key})
+
+			validated := blindValidated("retry", tc.submittedHeight, writes(true, state{"1", 1, 0}))
+			if tc.invalidStatus != nil {
+				validated.updateInvalidTxs([]TxID{"retry"}, *tc.invalidStatus)
+			}
+
+			batch, err := env.c.commitTransactions(t.Context(), env.dbEnv.DB, validated)
+			require.NoError(t, err)
+
+			require.Len(t, batch.TxResult, 1)
+			require.Equal(t, tc.expectedStatus, batch.TxResult[0].Status.Status)
+			require.Empty(t, batch.TxResult[0].BlindWriteVersions)
+			require.Equal(t, before, env.dbEnv.FetchKeys(t, "1", [][]byte{key}))
+		})
+	}
+}
+
+func TestResubmissionAfterLaterUpdateOmitsBlindVersions(t *testing.T) {
+	t.Parallel()
+	env := newCommitterTestEnv(t)
+	env.dbEnv.populateData(t, []string{"1"}, writes(false, state{"1", 1, 5}),
+		&servicepb.TxStatusBatch{}, transactionIDToHeight{})
+
+	// Step 1: Commit T1 before the recovery watermark advances.
+	t.Log("Step 1: Commit T1 before the recovery watermark advances.")
+	first, err := env.c.commitTransactions(t.Context(), env.dbEnv.DB,
+		blindValidated("t1", servicepb.NewHeight(10, 0), writes(true, state{"1", 1, 0})))
+	require.NoError(t, err)
+	require.Equal(t, committerpb.Status_COMMITTED, first.TxResult[0].Status.Status)
+	assigned := first.TxResult[0].BlindWriteVersions[0].Writes[0].Version
+	require.EqualValues(t, 6, assigned)
+
+	// Step 2: T1's result releases T2, which advances the same key's version.
+	t.Log("Step 2: T1's result releases T2, which advances the same key's version.")
+	second, err := env.c.commitTransactions(t.Context(), env.dbEnv.DB,
+		blindValidated("t2", servicepb.NewHeight(11, 0), writes(true, state{"1", 1, 0})))
+	require.NoError(t, err)
+	require.Equal(t, committerpb.Status_COMMITTED, second.TxResult[0].Status.Status)
+	require.Equal(t, assigned+1, second.TxResult[0].BlindWriteVersions[0].Writes[0].Version)
+	before := env.dbEnv.FetchKeys(t, "1", [][]byte{[]byte("key1.1")})
+
+	// Step 3: Coordinator restart replays T1; historical blind versions are unavailable.
+	t.Log("Step 3: Coordinator restart replays T1; historical blind versions are unavailable.")
+	replay, err := env.c.commitTransactions(t.Context(), env.dbEnv.DB,
+		blindValidated("t1", servicepb.NewHeight(10, 0), writes(true, state{"1", 1, 0})))
+	require.NoError(t, err)
+	test.RequireProtoEqual(t, first.TxResult[0].Status, replay.TxResult[0].Status)
+	require.Empty(t, replay.TxResult[0].BlindWriteVersions)
+	require.Equal(t, before, env.dbEnv.FetchKeys(t, "1", [][]byte{[]byte("key1.1")}))
+}
+
+func blindValidated(id TxID, height *servicepb.Height, nsWrites namespaceToWrites) *validatedTransactions {
+	return &validatedTransactions{
+		validTxBlindWrites:    transactionToWrites{id: nsWrites},
+		validTxNonBlindWrites: make(transactionToWrites), newWrites: make(transactionToWrites),
+		invalidTxStatus: make(map[TxID]committerpb.Status), readToTxIDs: make(readToTransactions),
+		txIDToHeight: transactionIDToHeight{id: height},
+	}
+}

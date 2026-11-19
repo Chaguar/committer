@@ -754,6 +754,7 @@ func TestRelayStatusRouting(t *testing.T) {
 			}}
 		}
 	}
+
 	statusBatch <- &servicepb.TxStatusBatch{TxResult: results}
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -773,6 +774,7 @@ func TestRelayStatusRouting(t *testing.T) {
 	require.True(t, ok, "the relay stopped before committing the block")
 	require.Equal(t, blk, outBlock)
 	requireStatusMetadata(t, blk, valid, byte(committerpb.Status_ABORTED_MVCC_CONFLICT), valid)
+
 	streamBlock, ok := channel.NewReader(gCtx, streamBlocks).Read()
 	require.True(t, ok)
 	require.Len(t, streamBlock.blindWriteVersions, len(applied))

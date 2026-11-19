@@ -643,10 +643,25 @@ func (c *CommitterRuntime) ValidateExpectedResultsInCommittedBlock(t *testing.T,
 	}
 
 	sidecar.RequireNotifications(t, c.NotifyStream, blk.Header.Number, expected.TxIDs, expected.Statuses)
+	c.requireStreamBlocks(t, blk.Header, expected)
+}
+
+func (c *CommitterRuntime) requireStreamBlocks(t *testing.T, header *common.BlockHeader,
+	expected *ExpectedStatusInBlock,
+) {
+	t.Helper()
+	// Custom requests add optional payloads; callers assert them through LastStreamBlockEvent.
+	if c.Config.StreamBlocksRequest != nil {
+		c.LastStreamBlockEvent = sidecar.ReceiveStreamBlockEvents(
+			t, c.StreamBlocksStream, header, expected.TxIDs, expected.Statuses,
+		)
+		return
+	}
+
 	c.LastStreamBlockEvent = sidecar.RequireStreamBlocks(
 		t,
 		c.StreamBlocksStream,
-		blk.Header,
+		header,
 		expected.TxIDs,
 		expected.Statuses,
 	)

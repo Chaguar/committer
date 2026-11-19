@@ -50,7 +50,6 @@ type (
 		// write categorization fields:
 		txIDToNsNonBlindWrites transactionToWrites // Maps txIDs to non-blind writes per namespace.
 		txIDToNsBlindWrites    transactionToWrites // Maps txIDs to blind writes per namespace.
-		originalBlindWrites    transactionToWrites // Stores only the original blind-write keys, not values or versions.
 		txIDToNsNewWrites      transactionToWrites // Maps txIDs to new writes per namespace.
 
 		invalidTxIDStatus map[TxID]committerpb.Status // Maps txIDs to the status.
@@ -148,7 +147,6 @@ func (p *transactionPreparer) prepare(ctx context.Context) error { //nolint:goco
 			readToTxIDs:            make(readToTransactions),
 			txIDToNsNonBlindWrites: make(transactionToWrites),
 			txIDToNsBlindWrites:    make(transactionToWrites),
-			originalBlindWrites:    make(transactionToWrites),
 			txIDToNsNewWrites:      make(transactionToWrites),
 			invalidTxIDStatus:      make(map[TxID]committerpb.Status),
 			txIDToHeight:           make(transactionIDToHeight),
@@ -167,24 +165,6 @@ func (p *transactionPreparer) prepare(ctx context.Context) error { //nolint:goco
 				continue
 			}
 			prepTxs.txIDToHeight[TxID(tx.Ref.TxId)] = servicepb.NewHeightFromTxRef(tx.Ref)
-
-			// A resubmitted transaction may fail read validation because its earlier commit changed the keys it read.
-			// Validation removes its working writes, but the committer may later find that the same transaction
-			// already committed at the same block number and transaction position. Keep its blind-write keys
-			// separately so the committer can still look up their committed versions. Save them before checking
-			// the preliminary status because that check can also skip preparing the working writes.
-			for _, ns := range tx.Namespaces {
-				if ns == nil {
-					continue
-				}
-				for _, write := range ns.BlindWrites {
-					if write == nil {
-						continue
-					}
-					prepTxs.originalBlindWrites.getOrCreate(TxID(tx.Ref.TxId), ns.NsId).append(write.Key, nil, 0)
-				}
-			}
-
 			// If the preliminary invalid transaction status is set,
 			// the vcservice does not need to validate the transaction,
 			// but it will still commit the status only if the txID is not a duplicate.

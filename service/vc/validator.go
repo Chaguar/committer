@@ -36,7 +36,6 @@ type transactionValidator struct {
 type validatedTransactions struct {
 	validTxNonBlindWrites transactionToWrites
 	validTxBlindWrites    transactionToWrites
-	originalBlindWrites   transactionToWrites
 	newWrites             transactionToWrites
 	readToTxIDs           readToTransactions
 	invalidTxStatus       map[TxID]committerpb.Status
@@ -115,7 +114,6 @@ func (v *transactionValidator) validate(ctx context.Context, db *database) error
 		vTxs := &validatedTransactions{
 			validTxNonBlindWrites: prepTx.txIDToNsNonBlindWrites,
 			validTxBlindWrites:    prepTx.txIDToNsBlindWrites,
-			originalBlindWrites:   prepTx.originalBlindWrites,
 			newWrites:             prepTx.txIDToNsNewWrites,
 			readToTxIDs:           prepTx.readToTxIDs,
 			invalidTxStatus:       prepTx.invalidTxIDStatus,

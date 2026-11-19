@@ -555,13 +555,12 @@ any transaction batches for which it has not received a final `TransactionsStatu
 
 Snapshot hashing is not part of VC recovery at all: it belongs to the separate, single-instance [snapshot hasher](snapshot-hasher.md). The VC's only duty is to make the `_snapshot` record durable atomically with its clone; that service polls the latest snapshot record and hashes any record that still needs it, so a snapshot committed by a VC that then crashed is picked up on a later poll with no VC involvement.
 
-
 ## Blind-write version feedback
 
-The preparer saves the keys of the original blind writes before checking the preliminary transaction status. These keys remain available even if validation removes the writes from the transaction. For a new blind-write key, VC assigns version zero. For an existing key, it assigns the current database version plus one. VC returns the assigned versions only after a successful commit. It does not return them for failed commit attempts or invalid transactions. Nil and empty values follow the same version rules.
+For a new blind-write key, VC assigns version zero. For an existing key, it assigns the current database version plus one. VC returns the assigned versions only after a successful fresh commit. It does not return them for failed commit attempts or invalid transactions. Nil and empty values follow the same version rules.
 
 Each `servicepb.TxResult` contains the transaction status and its blind-write versions, grouped by namespace. These results are sent together in `TxStatusBatch.tx_result`. Sidecar calculates regular-write versions from the original transaction. Status-only RPCs return statuses without fetching write versions.
 
-When the Coordinator resubmits a transaction with the same transaction ID, block number, and transaction position, VC returns its stored status. If that status is `COMMITTED`, VC reads the current versions of the original blind-write keys. It does not increment these versions or update the database state. VC returns no write versions for a stored aborted status or a duplicate transaction at a different block number or transaction position. If a required key is missing or a database query fails, VC returns an error. The versions returned on resubmission are current database versions, not a saved record of the versions assigned at the original commit.
+When the Coordinator resubmits a transaction with the same transaction ID, block number, and transaction position, VC returns its stored status without blind-write versions. Historical assigned versions are not persisted, and the current state may already reflect later transactions. This also applies to replay after a Coordinator restart: the Sidecar recovery watermark is updated periodically, so already-committed transactions can be resubmitted. VC does not modify state when returning the saved status. Stored aborted statuses and duplicate transactions at a different height also carry no blind-write versions.
 
 This feature does not change database tables, columns, stored procedures, or stored transaction statuses. Write-version metadata is kept only in memory.

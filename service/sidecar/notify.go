@@ -445,13 +445,10 @@ func (s *blockStream) streamWorker(stream committerpb.SidecarService_StreamBlock
 			return errors.New("block queue closed")
 		}
 
-		events, err := s.filterAndBuildEvents(block)
-		if err != nil {
-			logger.Errorf("Failed to build block event: %+v", err)
-			return errors.New("failed to build block event")
+		blockEvent := &committerpb.BlockEvent{
+			Header: block.header,
+			Events: s.filterAndBuildEvents(block),
 		}
-
-		blockEvent := &committerpb.BlockEvent{Header: block.header, Events: events}
 		if err := stream.Send(blockEvent); err != nil {
 			return errors.Wrap(err, "failed to send block event")
 		}
@@ -462,7 +459,7 @@ func (s *blockStream) streamWorker(stream committerpb.SidecarService_StreamBlock
 // and enriching with optional content based on the stream's configuration.
 func (s *blockStream) filterAndBuildEvents(
 	block *committedBlockWithTxs,
-) ([]*committerpb.TxEvent, error) {
+) []*committerpb.TxEvent {
 	// Pre-allocate with capacity for efficiency
 	events := make([]*committerpb.TxEvent, 0, len(block.txs))
 
@@ -478,37 +475,35 @@ func (s *blockStream) filterAndBuildEvents(
 			continue // Filtered out by namespace
 		}
 
-		// Build the event
-		event := &committerpb.TxEvent{
-			Ref:    tx.Ref,
-			Status: status,
-		}
-		// Include namespaces (read/write sets) if requested
-		if s.includeReadWriteSets {
-			event.Namespaces = matchingNamespaces
-			if status == committerpb.Status_COMMITTED {
-				versions, err := buildCommittedWriteVersions(tx.Content.GetNamespaces(), block.blindWriteVersions[i])
-				if err != nil {
-					return nil, fmt.Errorf("build committed write versions: %w", err)
-				}
-				for _, ns := range versions {
-					if len(s.filterNamespaces) == 0 || slices.Contains(s.filterNamespaces, ns.NsId) {
-						event.CommittedWriteVersions = append(event.CommittedWriteVersions, ns)
-					}
-				}
-			}
-		}
-		// Include endorsements if requested
-		if s.includeEndorsements {
-			event.Endorsements = tx.Content.Endorsements
-		}
-		if s.includeMetadata {
-			event.Metadata = tx.Content.Metadata
-		}
-		events = append(events, event)
+		events = append(events, s.buildTxEvent(block, i, matchingNamespaces))
 	}
 
-	return events, nil
+	return events
+}
+
+func (s *blockStream) buildTxEvent(block *committedBlockWithTxs, index int,
+	namespaces []*applicationpb.TxNamespace,
+) *committerpb.TxEvent {
+	tx := block.txs[index]
+	status := block.statuses[index]
+	event := &committerpb.TxEvent{Ref: tx.Ref, Status: status}
+
+	if s.includeReadWriteSets {
+		event.Namespaces = namespaces
+		if status == committerpb.Status_COMMITTED {
+			event.CommittedWriteVersions = buildCommittedWriteVersions(namespaces, block.blindWriteVersions[index])
+		}
+	}
+
+	if s.includeEndorsements {
+		event.Endorsements = tx.Content.Endorsements
+	}
+
+	if s.includeMetadata {
+		event.Metadata = tx.Content.Metadata
+	}
+
+	return event
 }
 
 func filterNamespaces(
@@ -532,7 +527,62 @@ func filterNamespaces(
 		if idx < 0 {
 			continue
 		}
+		if slices.Contains(matchingNamespaces, allNamespaces[idx]) {
+			continue
+		}
 		matchingNamespaces = append(matchingNamespaces, allNamespaces[idx])
 	}
 	return matchingNamespaces
+}
+
+type writeVersionKey struct {
+	namespace string
+	key       string
+}
+
+// buildCommittedWriteVersions associates available results with validated original writes.
+func buildCommittedWriteVersions(namespaces []*applicationpb.TxNamespace,
+	blind []*committerpb.NamespaceWriteVersions,
+) []*committerpb.NamespaceWriteVersions {
+	// Recovery and regular-only transactions carry no blind versions; skip the map allocation.
+	var assigned map[writeVersionKey]uint64
+	if len(blind) > 0 {
+		assigned = make(map[writeVersionKey]uint64)
+	}
+	for _, ns := range blind {
+		for _, write := range ns.Writes {
+			assigned[writeVersionKey{namespace: ns.NsId, key: string(write.Key)}] = write.Version
+		}
+	}
+
+	results := make([]*committerpb.NamespaceWriteVersions, 0, len(namespaces))
+	for _, ns := range namespaces {
+		result := buildNamespaceWriteVersions(ns, assigned)
+		if len(result.Writes) > 0 {
+			results = append(results, result)
+		}
+	}
+
+	return results
+}
+
+func buildNamespaceWriteVersions(ns *applicationpb.TxNamespace, assigned map[writeVersionKey]uint64,
+) *committerpb.NamespaceWriteVersions {
+	result := &committerpb.NamespaceWriteVersions{NsId: ns.NsId}
+	for _, write := range ns.ReadWrites {
+		version := uint64(0)
+		if write.Version != nil {
+			version = *write.Version + 1
+		}
+		result.Writes = append(result.Writes, &committerpb.CommittedWriteVersion{Key: write.Key, Version: version})
+	}
+
+	for _, write := range ns.BlindWrites {
+		version, present := assigned[writeVersionKey{namespace: ns.NsId, key: string(write.Key)}]
+		if present {
+			result.Writes = append(result.Writes, &committerpb.CommittedWriteVersion{Key: write.Key, Version: version})
+		}
+	}
+
+	return result
 }

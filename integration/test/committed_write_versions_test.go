@@ -26,6 +26,8 @@ func TestLiveCommittedWriteVersions(t *testing.T) {
 	c.Start(t, runner.FullTxPath)
 	c.CreateNamespacesAndCommit(t, "1", "2")
 
+	// Step 1: Commit initial writes to establish version zero.
+	t.Log("Step 1: Commit initial writes to establish version zero.")
 	ids := c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{
 		{
 			NsId:        "1",
@@ -39,6 +41,8 @@ func TestLiveCommittedWriteVersions(t *testing.T) {
 	require.Equal(t, ids[0], event.Ref.TxId)
 	requireCommittedVersions(t, c, 0, 3)
 
+	// Step 2: Update the initial keys and verify version increments.
+	t.Log("Step 2: Update the initial keys and verify version increments.")
 	c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{
 		{
 			NsId:        "1",
@@ -47,10 +51,13 @@ func TestLiveCommittedWriteVersions(t *testing.T) {
 		},
 		{NsId: "2", BlindWrites: []*applicationpb.Write{{Key: []byte("bw"), Value: nil}}},
 	}}, []committerpb.Status{committerpb.Status_COMMITTED})
+
 	requireCommittedVersions(t, c, 1, 3)
 
 	before := c.DBEnv.FetchKeys(t, "1", [][]byte{[]byte("rw"), []byte("bw")})
 
+	// Step 3: Reject stale reads without changing writes or reporting versions.
+	t.Log("Step 3: Reject stale reads without changing writes or reporting versions.")
 	c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{
 		{
 			NsId: "1",
@@ -60,21 +67,28 @@ func TestLiveCommittedWriteVersions(t *testing.T) {
 			BlindWrites: []*applicationpb.Write{{Key: []byte("bw"), Value: []byte("invalid")}},
 		},
 	}}, []committerpb.Status{committerpb.Status_ABORTED_MVCC_CONFLICT})
+
 	require.Empty(t, c.LastStreamBlockEvent.Events[0].CommittedWriteVersions)
 	require.Equal(t, before, c.DBEnv.FetchKeys(t, "1", [][]byte{[]byte("rw"), []byte("bw")}))
 
+	// Step 4: Reject invalid signatures without changing writes or reporting versions.
+	t.Log("Step 4: Reject invalid signatures without changing writes or reporting versions.")
 	c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{
 		{NsId: "1", BlindWrites: []*applicationpb.Write{{Key: []byte("bw"), Value: []byte("bad-signature")}}},
 	}}, []committerpb.Status{committerpb.Status_ABORTED_SIGNATURE_INVALID})
+
 	require.Empty(t, c.LastStreamBlockEvent.Events[0].CommittedWriteVersions)
 	require.Equal(t, before, c.DBEnv.FetchKeys(t, "1", [][]byte{[]byte("rw"), []byte("bw")}))
 
+	// Step 5: Commit a regular-only write without blind metadata.
+	t.Log("Step 5: Commit a regular-only write without blind metadata.")
 	c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{
 		{
 			NsId:       "1",
 			ReadWrites: []*applicationpb.ReadWrite{{Key: []byte("regular-only"), Value: nil}},
 		},
 	}}, []committerpb.Status{committerpb.Status_COMMITTED})
+
 	requireCommittedVersions(t, c, 0, 1)
 }
 

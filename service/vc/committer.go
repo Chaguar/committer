@@ -161,13 +161,9 @@ func (c *transactionCommitter) commitTransactions(
 			//       The setCorrectStatusForDuplicateTxID function checks whether the transaction is truly a
 			//       duplicate or a resubmission. If it is a resubmission, it retrieves the correct status from
 			//       the tx_status table.
-			for _, result := range info.batchStatus.TxResult {
-				if result.Status.Status == committerpb.Status_COMMITTED {
-					result.BlindWriteVersions = assigned[TxID(result.Status.Ref.TxId)]
-				}
-			}
+			attachBlindWriteVersions(info.batchStatus, assigned)
 
-			if err := c.setCorrectStatusForDuplicateTxID(ctx, db, info.batchStatus, vTx); err != nil {
+			if err := c.setCorrectStatusForDuplicateTxID(ctx, db, info.batchStatus, info.txIDToHeight); err != nil {
 				return nil, fmt.Errorf("failed to set correct status for duplicate txs: %w", err)
 			}
 
@@ -182,6 +178,16 @@ func (c *transactionCommitter) commitTransactions(
 	}
 
 	return nil, errors.Newf("[BUG] commit failed after %d retries", maxRetriesToRemoveAllInvalidTxs)
+}
+
+func attachBlindWriteVersions(batch *servicepb.TxStatusBatch,
+	assigned map[TxID][]*committerpb.NamespaceWriteVersions,
+) {
+	for _, result := range batch.TxResult {
+		if result.Status.Status == committerpb.Status_COMMITTED {
+			result.BlindWriteVersions = assigned[TxID(result.Status.Ref.TxId)]
+		}
+	}
 }
 
 // prepareStatusForCommit construct transaction status.
@@ -250,7 +256,7 @@ func (c *transactionCommitter) setCorrectStatusForDuplicateTxID(
 	ctx context.Context,
 	db *database,
 	txsStatus *servicepb.TxStatusBatch,
-	vTx *validatedTransactions,
+	txIDToHeight transactionIDToHeight,
 ) error {
 	var dupTxIDs [][]byte
 	dupTxIDsIdxMap := make(map[string]int)
@@ -277,40 +283,13 @@ func (c *transactionCommitter) setCorrectStatusForDuplicateTxID(
 
 	for _, txStatus := range idStatusHeight {
 		txID := txStatus.Ref.TxId
-		actualHeight := vTx.txIDToHeight[TxID(txID)]
+		actualHeight := txIDToHeight[TxID(txID)]
 		if !txStatus.Ref.IsHeight(actualHeight.BlockNum, actualHeight.TxNum) {
 			continue
 		}
 
-		result := &servicepb.TxResult{Status: txStatus}
-		if txStatus.Status != committerpb.Status_COMMITTED {
-			txsStatus.TxResult[dupTxIDsIdxMap[txID]] = result
-			continue
-		}
-
-		// Validation or duplicate detection may have removed this transaction from the working write maps.
-		// Use the saved original keys to return versions even when this attempt prepared no writes.
-		// Read the database because this attempt did not commit the versions it may have assigned locally.
-		for nsID, writes := range vTx.originalBlindWrites[TxID(txID)] {
-			versions, queryErr := db.queryVersionsIfPresent(ctx, nsID, writes.keys)
-			if queryErr != nil {
-				return fmt.Errorf("read resubmitted blind versions: %w", queryErr)
-			}
-
-			namespace := &committerpb.NamespaceWriteVersions{NsId: nsID}
-			for _, key := range writes.keys {
-				version, present := versions[string(key)]
-				if !present {
-					return errors.Newf("missing committed blind key in namespace %s", nsID)
-				}
-				namespace.Writes = append(namespace.Writes,
-					&committerpb.CommittedWriteVersion{Key: key, Version: version})
-			}
-
-			result.BlindWriteVersions = append(result.BlindWriteVersions, namespace)
-		}
-
-		txsStatus.TxResult[dupTxIDsIdxMap[txID]] = result
+		// Historical blind versions are not persisted; current state may belong to a later transaction.
+		txsStatus.TxResult[dupTxIDsIdxMap[txID]] = &servicepb.TxResult{Status: txStatus}
 	}
 
 	return nil

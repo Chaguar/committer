@@ -225,4 +225,4 @@ Verifier and VC feedback use `servicepb.TxStatusBatch.tx_result`. Each `TxResult
 
 Managers track transactions by block number and transaction position. Dropping an untracked/duplicate response removes its entire result, including versions. Accounting counts result entries plus checkpoint feedback, never version keys.
 
-Results are queued before dependency nodes are released. Pending Coordinator resubmissions retain this ordering; VC can return current blind-key versions.
+Results are queued before dependency nodes are released. Pending Coordinator resubmissions retain this ordering. When VC finds an already-committed transaction at the same height, it returns the stored status without blind-write versions: historical assigned versions are not persisted, and current state may reflect later writes.

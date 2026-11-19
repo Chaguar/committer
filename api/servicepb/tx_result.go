@@ -6,7 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 
 package servicepb
 
-import "github.com/Chaguar/common/api/committerpb"
+import (
+	"github.com/Chaguar/common/api/committerpb"
+)
 
 // NewTxResults wraps status-only responses without adding version metadata.
 func NewTxResults(statuses []*committerpb.TxStatus) []*TxResult {

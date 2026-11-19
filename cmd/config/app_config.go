@@ -21,6 +21,7 @@ import (
 
 	"github.com/Chaguar/committer/loadgen"
 	"github.com/Chaguar/committer/mock"
+	"github.com/Chaguar/committer/service/auth"
 	"github.com/Chaguar/committer/service/coordinator"
 	"github.com/Chaguar/committer/service/query"
 	"github.com/Chaguar/committer/service/sidecar"
@@ -76,6 +77,11 @@ func ReadSnapshotHasherYamlAndSetupLogging(
 	v *viper.Viper, configPath string,
 ) (*snapshothasher.Config, *serve.Config, error) {
 	return readYamlAndSetupLogging[snapshothasher.Config](v, configPath)
+}
+
+// ReadAuthYamlAndSetupLogging reading the YAML config file of the auth service.
+func ReadAuthYamlAndSetupLogging(v *viper.Viper, configPath string) (*auth.Config, *serve.Config, error) {
+	return readYamlAndSetupLogging[auth.Config](v, configPath)
 }
 
 // ReadMockOrdererYamlAndSetupLogging reading the YAML config file of the mock ordering service.

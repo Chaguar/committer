@@ -746,6 +746,14 @@ func TestRelayStatusRouting(t *testing.T) {
 
 	statusBatch := make(chan *servicepb.TxStatusBatch, 1)
 	results := servicepb.NewTxResults(append(slices.Clone(dropped), applied...))
+	for _, result := range results {
+		if result.Status.Status == committerpb.Status_COMMITTED {
+			result.BlindWriteVersions = []*committerpb.NamespaceWriteVersions{{
+				NsId:   "1",
+				Writes: []*committerpb.CommittedWriteVersion{{Key: []byte(result.Status.Ref.TxId), Version: 7}},
+			}}
+		}
+	}
 
 	statusBatch <- &servicepb.TxStatusBatch{TxResult: results}
 
@@ -766,6 +774,17 @@ func TestRelayStatusRouting(t *testing.T) {
 	require.True(t, ok, "the relay stopped before committing the block")
 	require.Equal(t, blk, outBlock)
 	requireStatusMetadata(t, blk, valid, byte(committerpb.Status_ABORTED_MVCC_CONFLICT), valid)
+
+	streamBlock, ok := channel.NewReader(gCtx, streamBlocks).Read()
+	require.True(t, ok)
+	require.Len(t, streamBlock.blindWriteVersions, len(applied))
+	for i, status := range applied {
+		if status.Status != committerpb.Status_COMMITTED {
+			require.Empty(t, streamBlock.blindWriteVersions[i])
+			continue
+		}
+		test.RequireProtoElementsMatch(t, results[len(dropped)+i].BlindWriteVersions, streamBlock.blindWriteVersions[i])
+	}
 
 	cancel()
 	require.ErrorIs(t, g.Wait(), context.Canceled)

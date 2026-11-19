@@ -651,3 +651,13 @@ When the Sidecar restarts after a failure, it follows these steps:
 
 When a sidecar fails and restarts, the client should assume that no state is persisted at the sidecar and,
 therefore, needs to resubmit the transaction IDs of interest for which it has not yet received a status update.
+
+## Committed write versions
+
+`StreamBlocks` includes `TxEvent.committed_write_versions` when `include_read_write_sets` is true and the transaction status is `COMMITTED`. Namespace and status filters still apply. Each entry contains a key and its committed version. Match these entries to the original transaction writes using the namespace ID and key. Do not match them by list position.
+
+For a regular write that creates a new key, Sidecar reports version zero. For a regular write that updates an existing key, it reports the version supplied in the transaction plus one. VC supplies the versions for blind writes. Events for invalid or rejected transactions do not include write versions. Requests with `include_read_write_sets` set to false do not include them either.
+
+Sidecar matches each result using the transaction ID, block number, and transaction position. It saves the blind-write versions before decreasing the number of pending transactions in the block. It associates available VC metadata with original writes by namespace and key, then builds separate output messages for each subscription using its matching namespaces. Filtering one subscription does not change another subscription's versions or the original transaction data.
+
+During recovery, stored statuses and already-committed transaction replays may have no blind-write versions. Sidecar still derives regular-write versions from the original committed transaction, but omits blind-write keys without metadata. For each such write, consumers must treat its version as unknown and invalidate any previously cached version for that key; query current state when an exact value/version pair is required. The current database version is not a substitute for the version assigned to a historical write.

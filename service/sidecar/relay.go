@@ -396,7 +396,8 @@ func (r *relay) processStatusBatch(
 				continue
 			}
 
-			if err := blkWithStatus.setFinalStatus(txStatus.Ref.TxNum, txStatus.Status); err != nil {
+			err := blkWithStatus.setFinalStatus(txStatus.Ref.TxNum, txStatus.Status, result.BlindWriteVersions)
+			if err != nil {
 				// This can never occur unless there is a bug in the relay or the coordinator.
 				return err
 			}
@@ -515,9 +516,10 @@ func (r *relay) processCommittedBlocksInOrder(
 
 		// Create committedBlockWithTxs from blockWithStatus for notifier
 		outgoingCommittedBlockWithTxs.Write(&committedBlockWithTxs{
-			header:   blkWithStatus.block.Header,
-			txs:      blkWithStatus.txs,
-			statuses: blkWithStatus.txStatus,
+			header:             blkWithStatus.block.Header,
+			txs:                blkWithStatus.txs,
+			statuses:           blkWithStatus.txStatus,
+			blindWriteVersions: blkWithStatus.blindWriteVersions,
 		})
 	}
 }

@@ -56,13 +56,14 @@ type (
 		DBEnv      *vc.DatabaseTestEnv
 		OrdererEnv *mock.OrdererTestEnv
 
-		OrdererStream       adapters.Broadcaster
-		CoordinatorClient   servicepb.CoordinatorClient
-		QueryServiceClient  committerpb.QueryServiceClient
-		SidecarClientConfig *connection.ClientConfig
-		NotifyClient        committerpb.SidecarServiceClient
-		NotifyStream        committerpb.SidecarService_OpenNotificationStreamClient
-		StreamBlocksStream  committerpb.SidecarService_StreamBlocksClient
+		OrdererStream        adapters.Broadcaster
+		CoordinatorClient    servicepb.CoordinatorClient
+		QueryServiceClient   committerpb.QueryServiceClient
+		SidecarClientConfig  *connection.ClientConfig
+		NotifyClient         committerpb.SidecarServiceClient
+		NotifyStream         committerpb.SidecarService_OpenNotificationStreamClient
+		StreamBlocksStream   committerpb.SidecarService_StreamBlocksClient
+		LastStreamBlockEvent *committerpb.BlockEvent
 
 		CommittedBlock          chan *common.Block
 		TxBuilder               *workload.TxBuilder
@@ -80,6 +81,8 @@ type (
 		BlockSize         uint64
 		BlockTimeout      time.Duration
 		LoadgenBlockLimit uint64
+		// StreamBlocksRequest selects optional content for the test subscription.
+		StreamBlocksRequest *committerpb.StreamBlocksRequest
 
 		// DBConnection configures the runtime to operate with a custom database connection.
 		DBConnection *testdb.Connection
@@ -355,7 +358,7 @@ func (c *CommitterRuntime) OpenNotificationStream(ctx context.Context, t *testin
 	var err error
 	c.NotifyStream, err = c.NotifyClient.OpenNotificationStream(ctx)
 	require.NoError(t, err)
-	c.StreamBlocksStream, err = c.NotifyClient.StreamBlocks(ctx, nil)
+	c.StreamBlocksStream, err = c.NotifyClient.StreamBlocks(ctx, c.Config.StreamBlocksRequest)
 	require.NoError(t, err)
 }
 
@@ -640,10 +643,25 @@ func (c *CommitterRuntime) ValidateExpectedResultsInCommittedBlock(t *testing.T,
 	}
 
 	sidecar.RequireNotifications(t, c.NotifyStream, blk.Header.Number, expected.TxIDs, expected.Statuses)
-	sidecar.RequireStreamBlocks(
+	c.requireStreamBlocks(t, blk.Header, expected)
+}
+
+func (c *CommitterRuntime) requireStreamBlocks(t *testing.T, header *common.BlockHeader,
+	expected *ExpectedStatusInBlock,
+) {
+	t.Helper()
+	// Custom requests add optional payloads; callers assert them through LastStreamBlockEvent.
+	if c.Config.StreamBlocksRequest != nil {
+		c.LastStreamBlockEvent = sidecar.ReceiveStreamBlockEvents(
+			t, c.StreamBlocksStream, header, expected.TxIDs, expected.Statuses,
+		)
+		return
+	}
+
+	c.LastStreamBlockEvent = sidecar.RequireStreamBlocks(
 		t,
 		c.StreamBlocksStream,
-		blk.Header,
+		header,
 		expected.TxIDs,
 		expected.Statuses,
 	)

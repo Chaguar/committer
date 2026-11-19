@@ -133,7 +133,7 @@ func TestDependencyGraph(t *testing.T) {
 
 	ensureProcessedAndValidatedMetrics(t, metrics, 4, 4)
 	// after validating all txs, the dependency detector should be empty
-	ensureEmptyDetector(t, dm.dependencyDetector)
+	ensureEmptyDetector(t, dm.dependencyDetector, &dm.mu)
 
 	t.Log("check dependency in namespace")
 	keys = makeTestKeys(t, 10)
@@ -206,5 +206,5 @@ func TestDependencyGraph(t *testing.T) {
 
 	ensureProcessedAndValidatedMetrics(t, metrics, 8, 8)
 	// after validating all txs, the dependency detector should be empty
-	ensureEmptyDetector(t, dm.dependencyDetector)
+	ensureEmptyDetector(t, dm.dependencyDetector, &dm.mu)
 }

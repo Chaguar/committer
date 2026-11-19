@@ -28,6 +28,7 @@ import (
 const (
 	managerKindGlobalLocal = "global-local"
 	managerKindSimple      = "simple"
+	managerKindConflictSet = "conflict-set"
 )
 
 type batchWithLatency struct {
@@ -104,23 +105,41 @@ func BenchmarkDependencyGraph(b *testing.B) {
 				{kind: managerKindGlobalLocal, workers: 8},
 				{kind: managerKindGlobalLocal, workers: 16},
 				{kind: managerKindGlobalLocal, workers: 32},
+				{kind: managerKindConflictSet, workers: 2},
+				{kind: managerKindConflictSet, workers: 4},
 			} {
 				name := fmt.Sprintf("%s-%d", tc.kind, tc.workers)
 				b.Run(name, func(b *testing.B) {
 					// The main queues.
 					in := make(chan *TransactionBatch, 8)
 					out := make(chan TxNodeBatch, 8)
+					outSets := make(chan []TxNodeBatch, 8)
 					val := make(chan TxNodeBatch, 8)
 
 					// Starts the dependency manager.
-					startManager(b, tc.kind, &Parameters{
-						IncomingTxs:               in,
-						OutgoingDepFreeTxsNode:    out,
-						IncomingValidatedTxsNode:  val,
-						NumOfLocalDepConstructors: tc.workers,
-						WaitingTxsLimit:           20_000_000,
-						PrometheusMetricsProvider: monitoring.NewProvider(),
-					})
+					if tc.kind == managerKindConflictSet {
+						m := NewConflictSetManager(&ConflictSetParameters{
+							IncomingTxs:                 in,
+							OutgoingDepFreeConflictSets: outSets,
+							IncomingValidatedTxsNode:    val,
+							NumOfLocalDepConstructors:   tc.workers,
+							WaitingTxsLimit:             20_000_000,
+							PrometheusMetricsProvider:   monitoring.NewProvider(),
+						})
+						test.RunServiceForTest(b.Context(), b, func(ctx context.Context) error {
+							m.Run(ctx)
+							return nil
+						}, nil)
+					} else {
+						startManager(b, tc.kind, &Parameters{
+							IncomingTxs:               in,
+							OutgoingDepFreeTxsNode:    out,
+							IncomingValidatedTxsNode:  val,
+							NumOfLocalDepConstructors: tc.workers,
+							WaitingTxsLimit:           20_000_000,
+							PrometheusMetricsProvider: monitoring.NewProvider(),
+						})
+					}
 
 					// Over-supply transactions (3x) so the manager's internal
 					// queue stays populated throughout the measured window; we
@@ -129,6 +148,7 @@ func BenchmarkDependencyGraph(b *testing.B) {
 
 					ctx := b.Context()
 					outCtx := channel.NewReader(ctx, out)
+					outSetsCtx := channel.NewReader(ctx, outSets)
 					valCtx := channel.NewWriter(ctx, val)
 					inCtx := channel.NewWriter(ctx, in)
 					latencySimulatorQueue := channel.Make[*batchWithLatency](ctx, 1024*1024)
@@ -158,7 +178,7 @@ func BenchmarkDependencyGraph(b *testing.B) {
 						// dependency constructor releases a batch only once its predecessor has been
 						// released, so a batch numbered 0 waits for one that cannot exist and every
 						// global-local case hangs on the first batch.
-						var i uint64 = 1
+						i := uint64(1)
 						for ctx.Err() == nil && len(txPoll) > 0 {
 							take := min(batchSize, len(txPoll))
 							batch := workload.MapToCoordinatorBatch(i, txPoll[:take])
@@ -173,15 +193,27 @@ func BenchmarkDependencyGraph(b *testing.B) {
 					// Reads the output of the manager, and forward it to the latency simulator.
 					var total int
 					for total < b.N {
-						batch, ok := outCtx.Read()
-						if !ok {
-							return
+						var batches []TxNodeBatch
+						if tc.kind == managerKindConflictSet {
+							sets, ok := outSetsCtx.Read()
+							if !ok {
+								return
+							}
+							batches = sets
+						} else {
+							batch, ok := outCtx.Read()
+							if !ok {
+								return
+							}
+							batches = []TxNodeBatch{batch}
 						}
-						latencySimulatorQueue.Write(&batchWithLatency{
-							batch: batch,
-							done:  time.Now().Add(latency),
-						})
-						total += len(batch)
+						for _, batch := range batches {
+							latencySimulatorQueue.Write(&batchWithLatency{
+								batch: batch,
+								done:  time.Now().Add(latency),
+							})
+							total += len(batch)
+						}
 					}
 					b.StopTimer()
 					test.ReportTxPerSecond(b)

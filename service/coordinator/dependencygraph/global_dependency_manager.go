@@ -241,12 +241,15 @@ func (dm *globalDependencyManager) processValidatedTransactions(ctx context.Cont
 }
 
 func (dm *globalDependencyManager) outputFreedExistingTransactions(ctx context.Context) {
+	outgoing := channel.NewWriter(ctx, dm.outgoingDepFreeTransactionsNode)
 	for ctx.Err() == nil {
 		start := time.Now()
 		txsNode := dm.freedTransactionsSet.waitAndRemove(ctx)
 
 		if len(txsNode) > 0 {
-			dm.outgoingDepFreeTransactionsNode <- txsNode
+			if !outgoing.Write(txsNode) {
+				return
+			}
 			promutil.SubFromGauge(dm.metrics.gdgDepFreeTxCount, len(txsNode))
 		}
 		promutil.Observe(dm.metrics.gdgOutputFreedTxSeconds, time.Since(start))

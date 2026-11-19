@@ -578,6 +578,36 @@ func startStream(t *testing.T, endpoint connection.Endpoint, contentType ab.Seek
 	}
 }
 
+func TestBlockCacheWaitsForSlowestReader(t *testing.T) {
+	t.Parallel()
+	c := newBlockCache(2)
+	ctx := releaseCacheAfterTimeout(t.Context(), t, c, 3*time.Minute)
+	for i := range 2 {
+		require.Truef(t, c.addBlock(ctx, makeBlockNumber(i)), "insert %d", i)
+	}
+
+	t.Log("Step 1: a fast reader reads both blocks while a slow one has read none")
+	c.setReaderPosition(1, 0)
+	c.setReaderPosition(2, 0)
+	for i := range uint64(2) {
+		_, err := c.getBlock(ctx, i)
+		require.NoError(t, err)
+		c.setReaderPosition(1, i+1)
+	}
+	waitCtx := releaseCacheAfterTimeout(ctx, t, c, time.Second)
+	require.False(t, c.addBlock(waitCtx, makeBlockNumber(2)), "block 0 is still unread by the slow reader")
+
+	t.Log("Step 2: the slow reader reads block 0, which frees its slot")
+	c.setReaderPosition(2, 1)
+	require.True(t, c.addBlock(ctx, makeBlockNumber(2)))
+
+	t.Log("Step 3: closing the slow reader frees block 1's slot")
+	waitCtx = releaseCacheAfterTimeout(ctx, t, c, time.Second)
+	require.False(t, c.addBlock(waitCtx, makeBlockNumber(3)), "block 1 is still unread by the slow reader")
+	c.removeReader(2)
+	require.True(t, c.addBlock(ctx, makeBlockNumber(3)))
+}
+
 func seekPosition(i uint64) *ab.SeekPosition {
 	return &ab.SeekPosition{Type: &ab.SeekPosition_Specified{Specified: &ab.SeekSpecified{
 		Number: i,

@@ -75,17 +75,22 @@ type (
 		// Verifier batching configuration (for testing).
 		VerifierBatchTimeCutoff time.Duration // verifier
 		VerifierBatchSizeCutoff int           // verifier
+
+		// Snapshot hasher scheduling and pagination configuration (for testing).
+		SnapshotHasherPollInterval  time.Duration
+		SnapshotHasherHashBatchSize int
 	}
 
 	// SystemServices holds all configurations for the system services.
 	SystemServices struct {
-		Verifier    []ServiceConfig
-		VCService   []ServiceConfig
-		Orderer     []ServiceConfig
-		Coordinator ServiceConfig
-		Sidecar     ServiceConfig
-		Query       ServiceConfig
-		LoadGen     ServiceConfig
+		Verifier       []ServiceConfig
+		VCService      []ServiceConfig
+		Orderer        []ServiceConfig
+		Coordinator    ServiceConfig
+		Sidecar        ServiceConfig
+		Query          ServiceConfig
+		SnapshotHasher ServiceConfig
+		LoadGen        ServiceConfig
 	}
 
 	// ServiceConfig stores the service's server and metrics endpoints, along with their TLS configuration.

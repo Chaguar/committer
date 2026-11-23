@@ -44,14 +44,15 @@ type (
 	CommitterRuntime struct {
 		SystemConfig config.SystemConfig
 
-		MockOrderer  *ProcessWithConfig
-		Sidecar      *ProcessWithConfig
-		Coordinator  *ProcessWithConfig
-		QueryService *ProcessWithConfig
-		LoadGen      *ProcessWithConfig
-		DistLoadGen  *ProcessWithConfig
-		Verifier     []*ProcessWithConfig
-		VcService    []*ProcessWithConfig
+		MockOrderer    *ProcessWithConfig
+		Sidecar        *ProcessWithConfig
+		Coordinator    *ProcessWithConfig
+		QueryService   *ProcessWithConfig
+		SnapshotHasher *ProcessWithConfig
+		LoadGen        *ProcessWithConfig
+		DistLoadGen    *ProcessWithConfig
+		Verifier       []*ProcessWithConfig
+		VcService      []*ProcessWithConfig
 
 		DBEnv      *vc.DatabaseTestEnv
 		OrdererEnv *mock.OrdererTestEnv
@@ -135,6 +136,7 @@ const (
 	Verifier
 	VC
 	QueryService
+	SnapshotHasher
 
 	LoadGenForOnlyOrderer
 	LoadGenForOrderer
@@ -235,6 +237,10 @@ func NewRuntime(t *testing.T, conf *Config) *CommitterRuntime {
 			VerifierBatchSizeCutoff:             conf.VerifierBatchSizeCutoff,
 			QueryTLSRefreshInterval:             conf.QueryTLSRefreshInterval,
 
+			// Short polling and bounded pages keep integration snapshots fast and exercise pagination.
+			SnapshotHasherPollInterval:  100 * time.Millisecond,
+			SnapshotHasherHashBatchSize: 100,
+
 			// Keep-alive configuration for services which exposes their API.
 			KeepAliveTime:                conf.KeepAliveTime,
 			KeepAliveTimeout:             conf.KeepAliveTimeout,
@@ -299,6 +305,7 @@ func NewRuntime(t *testing.T, conf *Config) *CommitterRuntime {
 
 	c.Coordinator, s.Services.Coordinator = newProcess(t, params, cmdCoordinator)
 	c.QueryService, s.Services.Query = newProcess(t, params, cmdQuery)
+	c.SnapshotHasher, s.Services.SnapshotHasher = newProcess(t, params, cmdSnapshotHasher)
 	c.Sidecar, s.Services.Sidecar = newProcess(t, params, cmdSidecar)
 
 	// The load generators are pre-allocated here like every other service, but their config files are
@@ -386,6 +393,9 @@ func (c *CommitterRuntime) Start(t *testing.T, serviceFlags int) {
 		for _, p := range c.VcService {
 			p.Restart(t)
 		}
+	}
+	if SnapshotHasher&serviceFlags != 0 {
+		c.SnapshotHasher.Restart(t)
 	}
 	if Coordinator&serviceFlags != 0 {
 		c.Coordinator.Restart(t)
@@ -700,8 +710,8 @@ func (c *CommitterRuntime) requireAllServicesAreRunning(t test.TestingT) {
 // are excluded: their template and worker count depend on the service flags passed to Start, so
 // startLoadGen writes their config and starts them.
 func (c *CommitterRuntime) serverProcesses() []*ProcessWithConfig {
-	procs := make([]*ProcessWithConfig, 0, 4+len(c.Verifier)+len(c.VcService))
-	procs = append(procs, c.MockOrderer, c.Coordinator, c.Sidecar, c.QueryService)
+	procs := make([]*ProcessWithConfig, 0, 5+len(c.Verifier)+len(c.VcService))
+	procs = append(procs, c.MockOrderer, c.Coordinator, c.Sidecar, c.QueryService, c.SnapshotHasher)
 	procs = append(procs, c.Verifier...)
 	procs = append(procs, c.VcService...)
 	return procs

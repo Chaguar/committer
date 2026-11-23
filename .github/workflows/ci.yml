@@ -141,18 +141,30 @@ jobs:
         continue-on-error: true
 
   integration-test:
-    name: Integration Tests (yugabyte)
+    name: Integration Tests (${{ matrix.db-type }})
     needs: [gate]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - db-type: yugabyte
+            db-script: yuga
+            test-command: make test-integration
+          - db-type: postgres
+            db-script: postgres
+            test-command: go test -v -timeout 15m ./integration/test -run '^TestSnapshotCheckpoint$'
+    env:
+      DB_TYPE: ${{ matrix.db-type }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: scripts/install-dev-dependencies.sh
-      - run: scripts/get-and-start-yuga.sh
+      - run: scripts/get-and-start-${{ matrix.db-script }}.sh
       - run: go mod tidy
-      - run: make test-integration
+      - run: ${{ matrix.test-command }}
 
   db-resiliency-test:
     name: Integration DB Resiliency (container)

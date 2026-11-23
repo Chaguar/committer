@@ -449,6 +449,37 @@ func TestReadConfigSnapshotHasher(t *testing.T) {
 	}
 }
 
+func TestSnapshotHasherTemplate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		config       SystemConfig
+		pollInterval time.Duration
+		batchSize    int
+	}{
+		{name: "defaults", pollInterval: time.Minute, batchSize: 1000},
+		{
+			name: "integration settings",
+			config: SystemConfig{
+				SnapshotHasherPollInterval:  100 * time.Millisecond,
+				SnapshotHasherHashBatchSize: 100,
+			},
+			pollInterval: 100 * time.Millisecond,
+			batchSize:    100,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			configPath := CreateTempConfigFromTemplate(t, TemplateSnapshotHasher, &tc.config)
+			config, _, err := ReadSnapshotHasherYamlAndSetupLogging(NewViperWithSnapshotHasherDefaults(), configPath)
+			require.NoError(t, err)
+			require.Equal(t, tc.pollInterval, config.PollInterval)
+			require.Equal(t, tc.batchSize, config.ResourceLimits.HashBatchSize)
+			require.Equal(t, 4, config.ResourceLimits.MaxWorkersForHash)
+		})
+	}
+}
+
 func TestReadConfigLoadGen(t *testing.T) {
 	t.Parallel()
 	loadgenTLSCreds := test.NewServiceTLSConfig(artifactsPath, "loadgen", connection.MutualTLSMode)

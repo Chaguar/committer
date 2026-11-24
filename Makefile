@@ -181,7 +181,7 @@ test-core-db: FORCE
 
 # Tests for components that depend on the DB layer, but are agnostic to the specific DB used.
 test-requires-db: FORCE
-	@$(call test_method, ${REQUIRES_DB_PACKAGES})
+	@$(call test_method_with_coverage, ${REQUIRES_DB_PACKAGES})
 
 # Tests that require no DB at all, e.g., pure logic, utilities
 test-no-db: FORCE

@@ -126,7 +126,9 @@ run_step "Unit Tests (no DB)" make test-no-db
 
 # 3. DB tests with Postgres
 start_db postgres
-run_step "DB Tests (Postgres)" env DB_DEPLOYMENT=local DB_TYPE=postgres make test-all-db MAKEFLAGS=--jobs=4
+run_step "Core DB Tests (Postgres)" env DB_DEPLOYMENT=local DB_TYPE=postgres make test-core-db test_flags=-race MAKEFLAGS=--jobs=4
+run_step "Requires DB Tests (Postgres)" env DB_DEPLOYMENT=local DB_TYPE=postgres make test-requires-db test_flags=-race MAKEFLAGS=--jobs=4
+run_step "Integration Tests (Postgres)" env DB_DEPLOYMENT=local DB_TYPE=postgres go test -v -timeout 15m ./integration/test -run '^TestSnapshotCheckpoint$'
 stop_db postgres
 
 # 4. Core DB tests + integration tests with YugabyteDB
@@ -134,8 +136,8 @@ start_db yugabyte
 # Reduce parallelism for YugabyteDB tests. YugabyteDB's catalog is a single-tablet
 # table, so concurrent DDL from many parallel test processes causes serialization
 # conflicts. CI avoids this by running separate jobs on fresh instances.
-run_step "Core DB Tests (YugabyteDB)" env DB_DEPLOYMENT=local make test-core-db MAKEFLAGS=--jobs=4
-run_step "Integration Tests (YugabyteDB)" env DB_DEPLOYMENT=local make test-integration MAKEFLAGS=--jobs=4
+run_step "Core DB Tests (YugabyteDB)" env DB_DEPLOYMENT=local DB_TYPE=yugabyte make test-core-db test_flags=-race MAKEFLAGS=--jobs=4
+run_step "Integration Tests (YugabyteDB)" env DB_DEPLOYMENT=local DB_TYPE=yugabyte make test-integration MAKEFLAGS=--jobs=4
 stop_db yugabyte
 
 # 5. DB resiliency tests (auto-provisions containers)

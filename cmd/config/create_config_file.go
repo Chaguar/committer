@@ -75,10 +75,6 @@ type (
 		// Verifier batching configuration (for testing).
 		VerifierBatchTimeCutoff time.Duration // verifier
 		VerifierBatchSizeCutoff int           // verifier
-
-		// Snapshot hasher scheduling and pagination configuration (for testing).
-		SnapshotHasherPollInterval  time.Duration
-		SnapshotHasherHashBatchSize int
 	}
 
 	// SystemServices holds all configurations for the system services.

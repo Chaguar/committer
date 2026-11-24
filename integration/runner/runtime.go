@@ -237,10 +237,6 @@ func NewRuntime(t *testing.T, conf *Config) *CommitterRuntime {
 			VerifierBatchSizeCutoff:             conf.VerifierBatchSizeCutoff,
 			QueryTLSRefreshInterval:             conf.QueryTLSRefreshInterval,
 
-			// Short polling and bounded pages keep integration snapshots fast and exercise pagination.
-			SnapshotHasherPollInterval:  100 * time.Millisecond,
-			SnapshotHasherHashBatchSize: 100,
-
 			// Keep-alive configuration for services which exposes their API.
 			KeepAliveTime:                conf.KeepAliveTime,
 			KeepAliveTimeout:             conf.KeepAliveTimeout,
@@ -537,10 +533,35 @@ func (c *CommitterRuntime) MakeAndSendTransactionsToOrderer(
 	return c.SendTransactionsToOrderer(t, txs, expectedStatus)
 }
 
-// SendTransactionsToOrderer creates a block with given transactions, send it to the committer, and verify the result.
+// SendTransactionsToOrderer broadcasts transactions through the orderer's normal block cutter.
 func (c *CommitterRuntime) SendTransactionsToOrderer(
 	t *testing.T, txs []*servicepb.LoadGenTx, expectedStatus []committerpb.Status,
 ) []string {
+	t.Helper()
+	expected := c.registerExpectedTransactions(t, txs, expectedStatus)
+	require.NoError(t, c.OrdererStream.SendBatch(workload.MapToEnvelopeBatch(0, txs)))
+	if expectedStatus != nil {
+		c.ValidateExpectedResultsInCommittedBlock(t, expected)
+	}
+	return expected.TxIDs
+}
+
+// SubmitBlockToOrderer preserves exact block composition while retaining notification and block-stream checks.
+func (c *CommitterRuntime) SubmitBlockToOrderer(
+	t *testing.T, txs []*servicepb.LoadGenTx, expectedStatus []committerpb.Status,
+) []string {
+	t.Helper()
+	expected := c.registerExpectedTransactions(t, txs, expectedStatus)
+	require.NoError(t, c.OrdererEnv.Orderer.SubmitBlock(t.Context(), workload.MapToOrdererBlock(0, txs)))
+	if expectedStatus != nil {
+		c.ValidateExpectedResultsInCommittedBlock(t, expected)
+	}
+	return expected.TxIDs
+}
+
+func (c *CommitterRuntime) registerExpectedTransactions(
+	t *testing.T, txs []*servicepb.LoadGenTx, expectedStatus []committerpb.Status,
+) *ExpectedStatusInBlock {
 	t.Helper()
 	expected := &ExpectedStatusInBlock{
 		Statuses: expectedStatus,
@@ -562,13 +583,7 @@ func (c *CommitterRuntime) SendTransactionsToOrderer(
 		time.Sleep(1 * time.Second)
 	}
 
-	err := c.OrdererStream.SendBatch(workload.MapToEnvelopeBatch(0, txs))
-	require.NoError(t, err)
-
-	if expectedStatus != nil {
-		c.ValidateExpectedResultsInCommittedBlock(t, expected)
-	}
-	return expected.TxIDs
+	return expected
 }
 
 // ExpectedStatusInBlock holds pairs of expected txID and the corresponding status in a block. The order of statuses

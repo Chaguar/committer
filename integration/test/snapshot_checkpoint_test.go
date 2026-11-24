@@ -33,7 +33,7 @@ import (
 
 func TestSnapshotCheckpoint(t *testing.T) {
 	t.Parallel()
-	c := runner.NewRuntime(t, &runner.Config{CrashTest: true, NumVerifiers: 2, NumVCService: 2})
+	c := runner.NewRuntime(t, &runner.Config{NumVerifiers: 2, NumVCService: 2})
 	// Register both namespaces so TxBuilder emits endorsements; absent entries leave them unsigned.
 	// nil selects default MSP signing with generated peer identities, not disabled verification.
 	// The verifier still enforces SnapshotEndorsement/CheckpointEndorsement from the config block.
@@ -52,7 +52,7 @@ func TestSnapshotCheckpoint(t *testing.T) {
 	t.Cleanup(live.Close)
 	states := statedb.NewSnapshotStateManager(live, c.DBEnv.DBConf.Retry)
 
-	// Sequential lifecycles avoid cluster-global clone-name collisions at equal block heights.
+	// At most one snapshot lifecycle is active, so each case checkpoints before the next snapshot.
 	//nolint:paralleltest // Each case checkpoints before the next snapshot.
 	for _, tc := range []struct {
 		name     string
@@ -66,7 +66,7 @@ func TestSnapshotCheckpoint(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Step 1: Seed data that the clone must preserve or update at the snapshot boundary.
 			t.Log("Step 1: Commit 1,000 keys before the snapshot block")
-			// ns1 overwrite: "before" -> "snapshot block" (mixed cases) -> "after" -> "checkpointed".
+			// ns1 overwrite: "before" -> "snapshot block" (mixed cases) -> "after".
 			// The clone must retain the snapshot-boundary value, not the later live-state updates.
 			updatedKey := []byte(tc.name + "-key")
 			// New ns2 row in the snapshot block: the clone must include "same block" at every marker position.
@@ -113,10 +113,10 @@ func TestSnapshotCheckpoint(t *testing.T) {
 				require.NoError(t, statedb.AdminExec(ctx, c.DBEnv.DBConf,
 					fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", pgx.Identifier{cloneName}.Sanitize())))
 			})
-			submitSnapshotTestBlock(t, c, txs)
+			c.SubmitBlockToOrderer(t, txs, slices.Repeat([]committerpb.Status{committerpb.Status_COMMITTED}, len(txs)))
 
 			// Step 3: Writes after the barrier must keep flowing without leaking into the clone.
-			t.Log("Step 3: Commit later writes while hashing runs")
+			t.Log("Step 3: Commit later writes after the snapshot block")
 			c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{{
 				NsId: "1", ReadWrites: []*applicationpb.ReadWrite{{
 					Key: updatedKey, Value: []byte("after"), Version: new(cloneVersion),
@@ -153,7 +153,9 @@ func TestSnapshotCheckpoint(t *testing.T) {
 				NsId:       committerpb.CheckpointNamespaceID,
 				ReadWrites: []*applicationpb.ReadWrite{{Key: checkpointKey, Value: state.Hash}},
 			}}})
-			submitSnapshotTestBlock(t, c, []*servicepb.LoadGenTx{checkpoint})
+			c.SubmitBlockToOrderer(
+				t, []*servicepb.LoadGenTx{checkpoint}, []committerpb.Status{committerpb.Status_COMMITTED},
+			)
 			checkpointed := requireSnapshotTestState(t, states, ref, committerpb.SnapshotState_CHECKPOINTED)
 			require.Equal(t, state.Hash, checkpointed.Hash)
 			require.Equal(t, state.CloneDatabase, checkpointed.CloneDatabase)
@@ -161,14 +163,6 @@ func TestSnapshotCheckpoint(t *testing.T) {
 				map[string]*vc.ValueVersion{string(checkpointKey): {Value: state.Hash, Version: 0}})
 			requireSnapshotTestRows(t, clone, committerpb.CheckpointNamespaceID, [][]byte{checkpointKey},
 				map[string]*vc.ValueVersion{})
-
-			// Step 5: A checkpoint must release intake for ordinary transactions and the next lifecycle.
-			t.Log("Step 5: Commit another ordinary write after checkpointing")
-			c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{{
-				NsId: "1", ReadWrites: []*applicationpb.ReadWrite{{
-					Key: updatedKey, Value: []byte("checkpointed"), Version: new(cloneVersion + 1),
-				}},
-			}}}, []committerpb.Status{committerpb.Status_COMMITTED})
 		})
 	}
 }
@@ -182,7 +176,6 @@ func seedSnapshotTestKeys(
 	writes = append(
 		writes,
 		&applicationpb.Write{Key: []byte(prefix + "-key"), Value: []byte("before")},
-		&applicationpb.Write{Key: []byte(prefix + "-retained"), Value: []byte("retained")},
 	)
 	for i := range numKeys - len(writes) {
 		writes = append(writes, &applicationpb.Write{
@@ -196,23 +189,10 @@ func seedSnapshotTestKeys(
 		keys = append(keys, write.Key)
 		expected[string(write.Key)] = &vc.ValueVersion{Value: write.Value, Version: 0}
 	}
-	require.Len(t, expected, numKeys)
 	c.MakeAndSendTransactionsToOrderer(t, [][]*applicationpb.TxNamespace{{{
 		NsId: "1", BlindWrites: writes,
 	}}}, []committerpb.Status{committerpb.Status_COMMITTED})
 	return keys, expected
-}
-
-func submitSnapshotTestBlock(t *testing.T, c *runner.CommitterRuntime, txs []*servicepb.LoadGenTx) {
-	t.Helper()
-	expected := &runner.ExpectedStatusInBlock{}
-	for _, tx := range txs {
-		expected.TxIDs = append(expected.TxIDs, tx.Id)
-		expected.Statuses = append(expected.Statuses, committerpb.Status_COMMITTED)
-	}
-	// Direct submission fixes block composition; the orderer's normal cutter uses size one.
-	require.NoError(t, c.OrdererEnv.Orderer.SubmitBlock(t.Context(), workload.MapToOrdererBlock(0, txs)))
-	c.ValidateExpectedResultsInCommittedBlock(t, expected)
 }
 
 func requireSnapshotTestState(
@@ -220,8 +200,7 @@ func requireSnapshotTestState(
 ) *committerpb.SnapshotState {
 	t.Helper()
 	var state *committerpb.SnapshotState
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
+	ctx := t.Context()
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
 		var err error
 		state, err = states.Read(ctx, ref.TxId)

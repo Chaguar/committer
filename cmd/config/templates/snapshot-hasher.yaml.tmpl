@@ -5,3 +5,7 @@
 {{ include "service" . | indent 0 }}
 
 {{ include "database" . | indent 0 }}
+
+poll-interval: 100ms
+resource-limits:
+  hash-batch-size: 100

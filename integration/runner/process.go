@@ -118,6 +118,12 @@ var (
 		Args:     []string{"start", "query"},
 		Template: config.TemplateQueryService,
 	}
+	cmdSnapshotHasher = CmdParameters{
+		Name:     "snapshot-hasher",
+		Bin:      committerCMD,
+		Args:     []string{"start", "snapshot-hasher"},
+		Template: config.TemplateSnapshotHasher,
+	}
 	cmdLoadGen = CmdParameters{
 		Name: "loadgen",
 		Bin:  loadgenCMD,

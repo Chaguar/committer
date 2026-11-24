@@ -44,14 +44,15 @@ type (
 	CommitterRuntime struct {
 		SystemConfig config.SystemConfig
 
-		MockOrderer  *ProcessWithConfig
-		Sidecar      *ProcessWithConfig
-		Coordinator  *ProcessWithConfig
-		QueryService *ProcessWithConfig
-		LoadGen      *ProcessWithConfig
-		DistLoadGen  *ProcessWithConfig
-		Verifier     []*ProcessWithConfig
-		VcService    []*ProcessWithConfig
+		MockOrderer    *ProcessWithConfig
+		Sidecar        *ProcessWithConfig
+		Coordinator    *ProcessWithConfig
+		QueryService   *ProcessWithConfig
+		SnapshotHasher *ProcessWithConfig
+		LoadGen        *ProcessWithConfig
+		DistLoadGen    *ProcessWithConfig
+		Verifier       []*ProcessWithConfig
+		VcService      []*ProcessWithConfig
 
 		DBEnv      *vc.DatabaseTestEnv
 		OrdererEnv *mock.OrdererTestEnv
@@ -135,6 +136,7 @@ const (
 	Verifier
 	VC
 	QueryService
+	SnapshotHasher
 
 	LoadGenForOnlyOrderer
 	LoadGenForOrderer
@@ -299,6 +301,7 @@ func NewRuntime(t *testing.T, conf *Config) *CommitterRuntime {
 
 	c.Coordinator, s.Services.Coordinator = newProcess(t, params, cmdCoordinator)
 	c.QueryService, s.Services.Query = newProcess(t, params, cmdQuery)
+	c.SnapshotHasher, s.Services.SnapshotHasher = newProcess(t, params, cmdSnapshotHasher)
 	c.Sidecar, s.Services.Sidecar = newProcess(t, params, cmdSidecar)
 
 	// The load generators are pre-allocated here like every other service, but their config files are
@@ -386,6 +389,9 @@ func (c *CommitterRuntime) Start(t *testing.T, serviceFlags int) {
 		for _, p := range c.VcService {
 			p.Restart(t)
 		}
+	}
+	if SnapshotHasher&serviceFlags != 0 {
+		c.SnapshotHasher.Restart(t)
 	}
 	if Coordinator&serviceFlags != 0 {
 		c.Coordinator.Restart(t)
@@ -527,10 +533,35 @@ func (c *CommitterRuntime) MakeAndSendTransactionsToOrderer(
 	return c.SendTransactionsToOrderer(t, txs, expectedStatus)
 }
 
-// SendTransactionsToOrderer creates a block with given transactions, send it to the committer, and verify the result.
+// SendTransactionsToOrderer broadcasts transactions through the orderer's normal block cutter.
 func (c *CommitterRuntime) SendTransactionsToOrderer(
 	t *testing.T, txs []*servicepb.LoadGenTx, expectedStatus []committerpb.Status,
 ) []string {
+	t.Helper()
+	expected := c.registerExpectedTransactions(t, txs, expectedStatus)
+	require.NoError(t, c.OrdererStream.SendBatch(workload.MapToEnvelopeBatch(0, txs)))
+	if expectedStatus != nil {
+		c.ValidateExpectedResultsInCommittedBlock(t, expected)
+	}
+	return expected.TxIDs
+}
+
+// SubmitBlockToOrderer preserves exact block composition while retaining notification and block-stream checks.
+func (c *CommitterRuntime) SubmitBlockToOrderer(
+	t *testing.T, txs []*servicepb.LoadGenTx, expectedStatus []committerpb.Status,
+) []string {
+	t.Helper()
+	expected := c.registerExpectedTransactions(t, txs, expectedStatus)
+	require.NoError(t, c.OrdererEnv.Orderer.SubmitBlock(t.Context(), workload.MapToOrdererBlock(0, txs)))
+	if expectedStatus != nil {
+		c.ValidateExpectedResultsInCommittedBlock(t, expected)
+	}
+	return expected.TxIDs
+}
+
+func (c *CommitterRuntime) registerExpectedTransactions(
+	t *testing.T, txs []*servicepb.LoadGenTx, expectedStatus []committerpb.Status,
+) *ExpectedStatusInBlock {
 	t.Helper()
 	expected := &ExpectedStatusInBlock{
 		Statuses: expectedStatus,
@@ -552,13 +583,7 @@ func (c *CommitterRuntime) SendTransactionsToOrderer(
 		time.Sleep(1 * time.Second)
 	}
 
-	err := c.OrdererStream.SendBatch(workload.MapToEnvelopeBatch(0, txs))
-	require.NoError(t, err)
-
-	if expectedStatus != nil {
-		c.ValidateExpectedResultsInCommittedBlock(t, expected)
-	}
-	return expected.TxIDs
+	return expected
 }
 
 // ExpectedStatusInBlock holds pairs of expected txID and the corresponding status in a block. The order of statuses
@@ -700,8 +725,8 @@ func (c *CommitterRuntime) requireAllServicesAreRunning(t test.TestingT) {
 // are excluded: their template and worker count depend on the service flags passed to Start, so
 // startLoadGen writes their config and starts them.
 func (c *CommitterRuntime) serverProcesses() []*ProcessWithConfig {
-	procs := make([]*ProcessWithConfig, 0, 4+len(c.Verifier)+len(c.VcService))
-	procs = append(procs, c.MockOrderer, c.Coordinator, c.Sidecar, c.QueryService)
+	procs := make([]*ProcessWithConfig, 0, 5+len(c.Verifier)+len(c.VcService))
+	procs = append(procs, c.MockOrderer, c.Coordinator, c.Sidecar, c.QueryService, c.SnapshotHasher)
 	procs = append(procs, c.Verifier...)
 	procs = append(procs, c.VcService...)
 	return procs

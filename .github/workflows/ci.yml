@@ -91,68 +91,63 @@ jobs:
         continue-on-error: true
 
   db-test:
-    name: Requires and Core DB Tests (postgres)
+    name: DB Tests (${{ matrix.suite }}, ${{ matrix.db-type }})
     needs: [gate]
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: scripts/install-dev-dependencies.sh
-      - run: scripts/get-and-start-postgres.sh
-      - run: go mod tidy
-      - run: make test-all-db
-      - run: scripts/test-coverage-filter-files.sh
-      - name: Send coverage
-        uses: shogo82148/actions-goveralls@v1
-        with:
-          path-to-profile: coverage.profile
-          flag-name: db-test
-          parallel: true
-        continue-on-error: true
-
-  core-db-test:
-    name: Core DB Tests (yugabyte)
-    needs: [gate]
-    runs-on: ubuntu-latest
-    # This job starts YugabyteDB (get-and-start-yuga.sh), so override the workflow-level
-    # DB_TYPE=postgres. The snapshot clone tests create a per-database snapshot schedule
-    # (testdb.EnsureSnapshotSchedule) only when DB_TYPE=yugabyte; without this
-    # the schedule is skipped and the clone fails with "Could not find snapshot schedule".
+    strategy:
+      fail-fast: false
+      matrix:
+        db-type: [postgres, yugabyte]
+        suite: [core-db, requires-db]
+        exclude:
+          # requires-db is DB-agnostic; run it once, on postgres.
+          - db-type: yugabyte
+            suite: requires-db
     env:
-      DB_TYPE: yugabyte
+      DB_TYPE: ${{ matrix.db-type }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: scripts/install-dev-dependencies.sh
-      - run: scripts/get-and-start-yuga.sh
+      - run: scripts/get-and-start-${{ matrix.db-type == 'yugabyte' && 'yuga' || 'postgres' }}.sh
       - run: go mod tidy
-      - run: make test-core-db
+      - run: make test-${{ matrix.suite }} test_flags=-race
       - run: scripts/test-coverage-filter-files.sh
       - name: Send coverage
         uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: coverage.profile
-          flag-name: core-db-test
+          flag-name: ${{ matrix.suite }}-${{ matrix.db-type }}
           parallel: true
         continue-on-error: true
 
   integration-test:
-    name: Integration Tests (yugabyte)
+    name: Integration Tests (${{ matrix.db-type }})
     needs: [gate]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - db-type: yugabyte
+            db-script: yuga
+            test-command: make test-integration
+          - db-type: postgres
+            db-script: postgres
+            test-command: go test -v -timeout 15m ./integration/test -run '^TestSnapshotCheckpoint$'
+    env:
+      DB_TYPE: ${{ matrix.db-type }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: scripts/install-dev-dependencies.sh
-      - run: scripts/get-and-start-yuga.sh
+      - run: scripts/get-and-start-${{ matrix.db-script }}.sh
       - run: go mod tidy
-      - run: make test-integration
+      - run: ${{ matrix.test-command }}
 
   db-resiliency-test:
     name: Integration DB Resiliency (container)
@@ -186,7 +181,6 @@ jobs:
     needs:
       - unit-test
       - db-test
-      - core-db-test
     runs-on: ubuntu-latest
     steps:
       - uses: coverallsapp/github-action@v2

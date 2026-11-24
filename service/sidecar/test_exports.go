@@ -58,38 +58,64 @@ func RequireNotifications( //nolint:revive // argument-limit.
 }
 
 // RequireStreamBlocks verifies that the expected transactions were received
-// from the StreamBlocks stream.
+// from the StreamBlocks stream without optional payloads.
 func RequireStreamBlocks( //nolint:revive // argument-limit.
 	t *testing.T,
 	stream committerpb.SidecarService_StreamBlocksClient,
 	expectedHeader *common.BlockHeader,
 	txIDs []string,
 	status []committerpb.Status,
-) {
+) *committerpb.BlockEvent {
+	t.Helper()
+	received := ReceiveStreamBlockEvents(t, stream, expectedHeader, txIDs, status)
+
+	expected := expectedStreamTxEvents(expectedHeader.GetNumber(), txIDs, status)
+	test.RequireProtoElementsMatch(t, expected, received.Events)
+
+	return received
+}
+
+// ReceiveStreamBlockEvents checks header and statuses; callers assert requested event payloads separately.
+func ReceiveStreamBlockEvents( //nolint:revive // argument-limit.
+	t *testing.T,
+	stream committerpb.SidecarService_StreamBlocksClient,
+	expectedHeader *common.BlockHeader,
+	txIDs []string,
+	status []committerpb.Status,
+) *committerpb.BlockEvent {
 	t.Helper()
 	require.Len(t, status, len(txIDs))
 
-	// Build expected events
-	expected := make([]*committerpb.TxEvent, len(txIDs))
-	for i, txID := range txIDs {
-		expected[i] = &committerpb.TxEvent{
-			Ref:    committerpb.NewTxRef(txID, expectedHeader.GetNumber(), uint32(i)),
-			Status: status[i],
-		}
-	}
+	expected := expectedStreamTxEvents(expectedHeader.GetNumber(), txIDs, status)
 
 	// Receive and validate the batch
-	var events []*committerpb.TxEvent
+	var received *committerpb.BlockEvent
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
 		batch, err := stream.Recv()
 		require.NoError(ct, err)
 		require.NotNil(ct, batch)
 		test.RequireProtoEqual(ct, expectedHeader, batch.Header)
-		events = batch.Events
+		received = batch
 	}, 15*time.Second, 50*time.Millisecond)
 
-	require.NotNil(t, events)
-	test.RequireProtoElementsMatch(t, expected, events)
+	require.NotNil(t, received)
+
+	statuses := make([]*committerpb.TxEvent, len(received.Events))
+	for i, event := range received.Events {
+		statuses[i] = &committerpb.TxEvent{Ref: event.Ref, Status: event.Status}
+	}
+	test.RequireProtoElementsMatch(t, expected, statuses)
+
+	return received
+}
+
+func expectedStreamTxEvents(blockNumber uint64, txIDs []string, statuses []committerpb.Status) []*committerpb.TxEvent {
+	expected := make([]*committerpb.TxEvent, len(txIDs))
+	for i, txID := range txIDs {
+		expected[i] = &committerpb.TxEvent{Ref: committerpb.NewTxRef(txID, blockNumber, uint32(i)), Status: statuses[i]}
+	}
+
+	return expected
 }
 
 // MalformedTxTestCases are valid and invalid TXs due to malformed.

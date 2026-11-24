@@ -636,4 +636,4 @@ The `VerifyNs()` method in the `signature.NsVerifier` verifies signatures for a 
 
 ## Result transport
 
-Verification streams return `servicepb.TxStatusBatch.tx_result`, with one `TxResult` wrapping each shared status. Verifier results have empty blind-write versions: version assignment belongs to VC.
+Verification streams return `servicepb.TxStatusBatch.tx_result`, with one `TxResult` wrapping each unchanged shared status. Verifier results have empty blind-write versions: version assignment belongs to VC. Input transactions, endorsements and signature verification semantics are unchanged.

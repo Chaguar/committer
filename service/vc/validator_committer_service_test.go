@@ -307,7 +307,7 @@ func TestValidatorAndCommitterService(t *testing.T) {
 			expectedTxStatus[i] = committerpb.NewTxStatusFromRef(tx.Ref, committerpb.Status_COMMITTED)
 			txIDs[i] = tx.Ref.TxId
 		}
-		test.RequireProtoElementsMatch(t, servicepb.NewTxResults(expectedTxStatus), txStatus.TxResult)
+		test.RequireProtoElementsMatch(t, expectedTxStatus, resultStatuses(txStatus.TxResult))
 
 		test.RequireIntMetricValue(t, len(txBatch.Transactions), env.vcs[0].metrics.transactionReceivedTotal)
 
@@ -408,7 +408,7 @@ func TestValidatorAndCommitterService(t *testing.T) {
 			txIDs = append(txIDs, tx.Ref.TxId)
 		}
 
-		test.RequireProtoElementsMatch(t, servicepb.NewTxResults(expectedTxStatus), txStatus.TxResult)
+		test.RequireProtoElementsMatch(t, expectedTxStatus, resultStatuses(txStatus.TxResult))
 
 		env.dbEnv.StatusExistsForNonDuplicateTxID(t.Context(), t, expectedTxStatus)
 
@@ -691,7 +691,7 @@ func TestTransactionResubmission(t *testing.T) {
 		require.NoError(t, env.streams[0].Send(txBatch))
 		txStatus, err := env.streams[0].Recv()
 		require.NoError(t, err)
-		test.RequireProtoElementsMatch(t, servicepb.NewTxResults(expectedTxStatus), txStatus.TxResult)
+		test.RequireProtoElementsMatch(t, expectedTxStatus, resultStatuses(txStatus.TxResult))
 		env.dbEnv.StatusExistsForNonDuplicateTxID(ctx, t, expectedTxStatus)
 
 		// we are submitting the same three transactions again to all vcservices.
@@ -700,7 +700,7 @@ func TestTransactionResubmission(t *testing.T) {
 			require.NoError(t, env.streams[i].Send(txBatch))
 			curTxStatus, receiveErr := env.streams[i].Recv()
 			require.NoError(t, receiveErr)
-			test.RequireProtoElementsMatch(t, servicepb.NewTxResults(expectedTxStatus), curTxStatus.TxResult)
+			test.RequireProtoElementsMatch(t, expectedTxStatus, resultStatuses(curTxStatus.TxResult))
 			env.dbEnv.StatusExistsForNonDuplicateTxID(ctx, t, expectedTxStatus)
 		}
 
@@ -716,7 +716,7 @@ func TestTransactionResubmission(t *testing.T) {
 			// as minbatchsize used for test is 1, we should receive two status batches.
 			txStatus, err := env.streams[0].Recv()
 			require.NoError(t, err)
-			test.RequireProtoElementsMatch(t, servicepb.NewTxResults(expectedTxStatus), txStatus.TxResult)
+			test.RequireProtoElementsMatch(t, expectedTxStatus, resultStatuses(txStatus.TxResult))
 		}
 		env.dbEnv.StatusExistsForNonDuplicateTxID(ctx, t, expectedTxStatus)
 		testapp.EnsurePersistedTxStatus(ctx, t, env.commonClient, txIDs, expectedTxStatus)
@@ -732,7 +732,7 @@ func TestTransactionResubmission(t *testing.T) {
 
 		txStatus, err := env.streams[0].Recv()
 		require.NoError(t, err)
-		test.RequireProtoElementsMatch(t, servicepb.NewTxResults(expectedTxStatus), txStatus.TxResult)
+		test.RequireProtoElementsMatch(t, expectedTxStatus, resultStatuses(txStatus.TxResult))
 
 		env.dbEnv.StatusExistsForNonDuplicateTxID(ctx, t, expectedTxStatus)
 		testapp.EnsurePersistedTxStatus(ctx, t, env.commonClient, txIDs, expectedTxStatus)
@@ -754,7 +754,7 @@ func TestTransactionResubmission(t *testing.T) {
 		for i := range 3 {
 			txStatus, err := env.streams[i].Recv()
 			require.NoError(t, err)
-			test.RequireProtoElementsMatch(t, servicepb.NewTxResults(expectedTxStatus), txStatus.TxResult)
+			test.RequireProtoElementsMatch(t, expectedTxStatus, resultStatuses(txStatus.TxResult))
 		}
 		env.dbEnv.StatusExistsForNonDuplicateTxID(ctx, t, expectedTxStatus)
 		testapp.EnsurePersistedTxStatus(ctx, t, env.commonClient, txIDs, expectedTxStatus)
@@ -776,4 +776,13 @@ func createValidatorAndCommitClientWithTLS(
 ) servicepb.ValidationAndCommitServiceClient {
 	t.Helper()
 	return test.CreateClientWithTLS(t, ep, tlsCfg, servicepb.NewValidationAndCommitServiceClient)
+}
+
+// resultStatuses drops version metadata so status assertions stay independent of blind-write versions.
+func resultStatuses(results []*servicepb.TxResult) []*committerpb.TxStatus {
+	statuses := make([]*committerpb.TxStatus, len(results))
+	for i, result := range results {
+		statuses[i] = result.Status
+	}
+	return statuses
 }

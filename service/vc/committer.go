@@ -98,7 +98,8 @@ func (c *transactionCommitter) commitTransactions(
 	vTx *validatedTransactions,
 ) (*servicepb.TxStatusBatch, error) {
 	// We eliminate blind writes outside the retry loop to avoid doing it more than once.
-	if err := c.populateVersionsAndCategorizeBlindWrites(ctx, db, vTx); err != nil {
+	assigned, err := c.populateVersionsAndCategorizeBlindWrites(ctx, db, vTx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -160,9 +161,12 @@ func (c *transactionCommitter) commitTransactions(
 			//       The setCorrectStatusForDuplicateTxID function checks whether the transaction is truly a
 			//       duplicate or a resubmission. If it is a resubmission, it retrieves the correct status from
 			//       the tx_status table.
+			attachBlindWriteVersions(info.batchStatus, assigned)
+
 			if err := c.setCorrectStatusForDuplicateTxID(ctx, db, info.batchStatus, info.txIDToHeight); err != nil {
 				return nil, fmt.Errorf("failed to set correct status for duplicate txs: %w", err)
 			}
+
 			info.batchStatus.CheckpointFeedback = vTx.checkpointFeedback
 			return info.batchStatus, nil
 		}
@@ -174,6 +178,16 @@ func (c *transactionCommitter) commitTransactions(
 	}
 
 	return nil, errors.Newf("[BUG] commit failed after %d retries", maxRetriesToRemoveAllInvalidTxs)
+}
+
+func attachBlindWriteVersions(batch *servicepb.TxStatusBatch,
+	assigned map[TxID][]*committerpb.NamespaceWriteVersions,
+) {
+	for _, result := range batch.TxResult {
+		if result.Status.Status == committerpb.Status_COMMITTED {
+			result.BlindWriteVersions = assigned[TxID(result.Status.Ref.TxId)]
+		}
+	}
 }
 
 // prepareStatusForCommit construct transaction status.
@@ -199,37 +213,43 @@ func prepareStatusForCommit(vTx *validatedTransactions) *servicepb.TxStatusBatch
 // to the appropriate category (new/update).
 func (c *transactionCommitter) populateVersionsAndCategorizeBlindWrites(
 	ctx context.Context, db *database, vTx *validatedTransactions,
-) error {
+) (map[TxID][]*committerpb.NamespaceWriteVersions, error) {
 	state := make(map[string]keyToVersion)
 	for nsID, writes := range groupWritesByNamespace(vTx.validTxBlindWrites) {
 		// TODO: Though we could run the following in a goroutine per namespace, we restrain
 		// 		 from doing so till we evaluate the performance
 		versionOfPresentKeys, err := db.queryVersionsIfPresent(ctx, nsID, writes.keys)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		state[nsID] = versionOfPresentKeys
 	}
 
 	// Place blind writes to the appropriate map (new/update)
+	assigned := make(map[TxID][]*committerpb.NamespaceWriteVersions)
 	for curTxID, txWrites := range vTx.validTxBlindWrites {
 		for ns, nsWrites := range txWrites {
 			nsState := state[ns]
+			namespace := &committerpb.NamespaceWriteVersions{NsId: ns}
 			for i, key := range nsWrites.keys {
+				nextVer := uint64(0)
 				if ver, present := nsState[string(key)]; present {
-					nextVer := ver + 1
+					nextVer = ver + 1
 					vTx.validTxNonBlindWrites.getOrCreate(curTxID, ns).append(key, nsWrites.values[i], nextVer)
 				} else {
-					vTx.newWrites.getOrCreate(curTxID, ns).append(key, nsWrites.values[i], 0)
+					vTx.newWrites.getOrCreate(curTxID, ns).append(key, nsWrites.values[i], nextVer)
 				}
+				namespace.Writes = append(namespace.Writes,
+					&committerpb.CommittedWriteVersion{Key: key, Version: nextVer})
 			}
+			assigned[curTxID] = append(assigned[curTxID], namespace)
 		}
 	}
 
 	// Clear the blind writes map
 	vTx.validTxBlindWrites = make(transactionToWrites)
 
-	return nil
+	return assigned, nil
 }
 
 func (c *transactionCommitter) setCorrectStatusForDuplicateTxID(
@@ -264,9 +284,12 @@ func (c *transactionCommitter) setCorrectStatusForDuplicateTxID(
 	for _, txStatus := range idStatusHeight {
 		txID := txStatus.Ref.TxId
 		actualHeight := txIDToHeight[TxID(txID)]
-		if txStatus.Ref.IsHeight(actualHeight.BlockNum, actualHeight.TxNum) {
-			txsStatus.TxResult[dupTxIDsIdxMap[txID]] = &servicepb.TxResult{Status: txStatus}
+		if !txStatus.Ref.IsHeight(actualHeight.BlockNum, actualHeight.TxNum) {
+			continue
 		}
+
+		// Historical blind versions are not persisted; current state may belong to a later transaction.
+		txsStatus.TxResult[dupTxIDsIdxMap[txID]] = &servicepb.TxResult{Status: txStatus}
 	}
 
 	return nil

@@ -554,3 +554,13 @@ any transaction batches for which it has not received a final `TransactionsStatu
 4.  **Resume Operation:** Once the Coordinator has re-sent any necessary batches and they have been processed idempotently, the system seamlessly resumes normal operation.
 
 Snapshot hashing is not part of VC recovery at all: it belongs to the separate, single-instance [snapshot hasher](snapshot-hasher.md). The VC's only duty is to make the `_snapshot` record durable atomically with its clone; that service polls the latest snapshot record and hashes any record that still needs it, so a snapshot committed by a VC that then crashed is picked up on a later poll with no VC involvement.
+
+## Blind-write version feedback
+
+For a new blind-write key, VC assigns version zero. For an existing key, it assigns the current database version plus one. VC returns the assigned versions only after a successful fresh commit. It does not return them for failed commit attempts or invalid transactions. Nil and empty values follow the same version rules.
+
+Each `servicepb.TxResult` contains the transaction status and its blind-write versions, grouped by namespace. These results are sent together in `TxStatusBatch.tx_result`. Sidecar calculates regular-write versions from the original transaction. Status-only RPCs return statuses without fetching write versions.
+
+When the Coordinator resubmits a transaction with the same transaction ID, block number, and transaction position, VC returns its stored status without blind-write versions. Historical assigned versions are not persisted, and the current state may already reflect later transactions. This also applies to replay after a Coordinator restart: the Sidecar recovery watermark is updated periodically, so already-committed transactions can be resubmitted. VC does not modify state when returning the saved status. Stored aborted statuses and duplicate transactions at a different height also carry no blind-write versions.
+
+This feature does not change database tables, columns, stored procedures, or stored transaction statuses. Write-version metadata is kept only in memory.

@@ -97,7 +97,7 @@ func newConflictSetInvariantEnv(t *testing.T, rng *rand.Rand, keyCount, writePer
 				continue
 			}
 		}
-		tx := createTxForTest(t, 0, nsID1ForTest, reads, writes, readWrites)
+		tx := createTxForTest(t, 0, nsID1ForTest, reads, readWrites, writes)
 		env.txs[i] = tx
 		env.access[i] = access
 		env.index[tx] = i

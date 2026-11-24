@@ -356,42 +356,62 @@ func TestConflictSetWaitingTxsLimit(t *testing.T) {
 
 func TestConflictSetIgnoresInvalidFeedback(t *testing.T) {
 	t.Parallel()
-	env := newConflictSetTestEnv(t, 20)
-	keys := makeTestKeys(t, 1)
+	for _, tc := range []struct {
+		name         string
+		waitingFirst bool
+	}{
+		{name: "prerequisite first"},
+		{name: "waiting first", waitingFirst: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := newConflictSetTestEnv(t, 20)
+			keys := makeTestKeys(t, 1)
 
-	a := createTxNode(t, nil, [][]byte{keys[0]}, nil)
-	b := createTxNode(t, nil, [][]byte{keys[0]}, nil)
-	b.addDependenciesAndUpdateDependents(TxNodeBatch{a})
-	// Step 1: Emit a multi-member prerequisite set.
-	t.Log("Step 1: Emit a multi-member prerequisite set")
-	env.incomingTxs <- createTxsNodeBatch(t, TxNodeBatch{a, b})
-	require.Len(t, readConflictSets(t, env.outgoing), 1)
+			a := createTxNode(t, nil, [][]byte{keys[0]}, nil)
+			b := createTxNode(t, nil, [][]byte{keys[0]}, nil)
+			b.addDependenciesAndUpdateDependents(TxNodeBatch{a})
+			// Step 1: Emit a multi-member prerequisite set.
+			t.Log("Step 1: Emit a multi-member prerequisite set")
+			env.incomingTxs <- createTxsNodeBatch(t, TxNodeBatch{a, b})
+			require.Len(t, readConflictSets(t, env.outgoing), 1)
 
-	x := createTxNode(t, nil, [][]byte{keys[0]}, nil)
-	// Step 2: Queue a dependent transaction.
-	t.Log("Step 2: Queue a dependent transaction")
-	env.incomingTxs <- createTxsNodeBatch(t, TxNodeBatch{x})
-	requireNoConflictSets(t, env.outgoing)
+			x := createTxNode(t, nil, [][]byte{keys[0]}, nil)
+			// Step 2: Queue a dependent transaction.
+			t.Log("Step 2: Queue a dependent transaction")
+			env.incomingTxs <- createTxsNodeBatch(t, TxNodeBatch{x})
+			requireNoConflictSets(t, env.outgoing)
 
-	rejected := NewRejectedTransactionNode(&committerpb.TxStatus{
-		Ref:    committerpb.NewTxRef("rejected", 0, 0),
-		Status: committerpb.Status_MALFORMED_UNSUPPORTED_ENVELOPE_PAYLOAD,
-	})
-	// Rejected node, duplicate of a, and x (still waiting) must all be ignored.
-	// Step 3: Ignore rejected, duplicate, and waiting feedback.
-	t.Log("Step 3: Ignore rejected, duplicate, and waiting feedback")
-	env.validatedTxs <- TxNodeBatch{rejected, a, a, x}
-	test.EventuallyIntMetric(t, 1, env.metrics.gdgValidatedTxProcessedTotal, 2*time.Second, 10*time.Millisecond)
-	test.RequireIntMetricValue(t, 3, env.metrics.gdgWaitingTxCount)
-	requireNoConflictSets(t, env.outgoing)
+			rejected := NewRejectedTransactionNode(&committerpb.TxStatus{
+				Ref:    committerpb.NewTxRef("rejected", 0, 0),
+				Status: committerpb.Status_MALFORMED_UNSUPPORTED_ENVELOPE_PAYLOAD,
+			})
+			// Rejected node, duplicate of a, and x (still waiting) must all be ignored.
+			// Step 3: Ignore rejected, duplicate, and waiting feedback.
+			t.Log("Step 3: Ignore rejected, duplicate, and waiting feedback")
+			env.validatedTxs <- TxNodeBatch{rejected, a, a, x}
+			test.EventuallyIntMetric(t, 1, env.metrics.gdgValidatedTxProcessedTotal, 2*time.Second, 10*time.Millisecond)
+			test.RequireIntMetricValue(t, 3, env.metrics.gdgWaitingTxCount)
+			requireNoConflictSets(t, env.outgoing)
 
-	// Step 4: Complete the prerequisite and validate the released dependent.
-	t.Log("Step 4: Complete the prerequisite and validate the released dependent")
-	env.validatedTxs <- TxNodeBatch{b}
-	require.Equal(t, []TxNodeBatch{{x}}, readConflictSets(t, env.outgoing))
-	test.EventuallyIntMetric(t, 2, env.metrics.gdgValidatedTxProcessedTotal, 2*time.Second, 10*time.Millisecond)
-	env.validatedTxs <- TxNodeBatch{x}
-	ensureProcessedAndValidatedMetrics(t, env.metrics, 3, 3)
+			// Step 4: Complete the prerequisite while ignoring waiting feedback in either order.
+			t.Log("Step 4: Complete the prerequisite while ignoring waiting feedback in either order")
+			feedback := TxNodeBatch{b, x}
+			if tc.waitingFirst {
+				feedback = TxNodeBatch{x, b}
+			}
+			env.validatedTxs <- feedback
+			require.Equal(t, []TxNodeBatch{{x}}, readConflictSets(t, env.outgoing))
+			test.EventuallyIntMetric(t, 2, env.metrics.gdgValidatedTxProcessedTotal, 2*time.Second, 10*time.Millisecond)
+			test.RequireIntMetricValue(t, 1, env.metrics.gdgWaitingTxCount)
+
+			// Step 5: Validate the dependent only after receiving its emitted set.
+			t.Log("Step 5: Validate the dependent only after receiving its emitted set")
+			env.validatedTxs <- TxNodeBatch{x}
+			ensureProcessedAndValidatedMetrics(t, env.metrics, 3, 3)
+			test.RequireIntMetricValue(t, 0, env.metrics.gdgWaitingTxCount)
+		})
+	}
 }
 
 func TestConflictSetOutputMutationDoesNotAffectManager(t *testing.T) {

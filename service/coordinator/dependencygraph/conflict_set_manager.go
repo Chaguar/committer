@@ -319,6 +319,7 @@ func (dm *conflictSetDependencyManager) processValidatedTransactions(ctx context
 // It returns the number of transactions in completed conflict sets and the number of accepted reports.
 // It must be called with dm.mu held.
 func (dm *conflictSetDependencyManager) markValidated(txsNode TxNodeBatch) (released, accepted int) {
+	var unblocked []*conflictSet
 	for _, tx := range txsNode {
 		f := tx.conflictSet
 		if f == nil || f.pending == 0 || tx.validated {
@@ -338,7 +339,7 @@ func (dm *conflictSetDependencyManager) markValidated(txsNode TxNodeBatch) (rele
 		for w := range f.dependentConflictSets {
 			delete(w.dependsOnConflictSets, f)
 			if len(w.dependsOnConflictSets) == 0 {
-				dm.emit(w)
+				unblocked = append(unblocked, w)
 			}
 		}
 		// Detach the completed conflict set so that it does not keep newer conflict sets reachable.
@@ -347,6 +348,10 @@ func (dm *conflictSetDependencyManager) markValidated(txsNode TxNodeBatch) (rele
 		for _, member := range f.txs {
 			member.conflictSet = nil
 		}
+	}
+	// Keep waiting feedback invalid for the entire batch, even if an earlier report unblocks its set.
+	for _, w := range unblocked {
+		dm.emit(w)
 	}
 	return released, accepted
 }

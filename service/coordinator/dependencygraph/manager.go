@@ -12,9 +12,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// DependencyManager tracks which transactions are free of dependencies. Two implementations
-// exist: Manager, which splits the work between a local constructor pool and a mutex-guarded
-// global graph, and SimpleManager, which keeps one map under a single owning goroutine.
+// DependencyManager tracks transaction dependencies. Manager uses local constructors
+// and a mutex-guarded global graph; SimpleManager uses a single owning goroutine.
+// ConflictSetManager emits ordered conflict sets instead of dependency-free transaction
+// batches, so its output cannot be plugged into the coordinator unchanged.
 type DependencyManager interface {
 	// Run processes transactions until the context is cancelled.
 	Run(ctx context.Context)

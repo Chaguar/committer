@@ -41,6 +41,7 @@ type perfMetrics struct {
 	gdgTxProcessedTotal          prometheus.Counter
 	gdgValidatedTxProcessedTotal prometheus.Counter
 
+	// Stage-duration histograms are Manager-only. ConflictSetManager also observes the two lock-wait histograms.
 	// performance of constructDependencyGraph()
 	gdgConstructionSeconds             prometheus.Histogram
 	gdgConstructorWaitForLockSeconds   prometheus.Histogram
@@ -58,14 +59,19 @@ type perfMetrics struct {
 
 	// gdgDepFreeTxCount counts the transactions the global dependency graph has released but the
 	// output channel has not taken yet (SimpleManager's pending, globalDependencyManager's
-	// freedTransactionsSet). They are held outside every queue, so no queue gauge shows them.
+	// freedTransactionsSet, ConflictSetManager's ready and pending output write). They are held outside
+	// every queue, so no queue gauge shows them.
 	gdgDepFreeTxCount prometheus.Gauge
 
 	// dependentTxCount is not a queue either; it counts the transactions blocked on a dependency
 	// and is maintained incrementally, like gdgWaitingTxCount above, from
 	// globalDependencyManager.constructDependencyGraph and processValidatedTransactions,
-	// localDependencyConstructor.construct and SimpleManager.taskProcessing.
+	// localDependencyConstructor.construct, SimpleManager.taskProcessing, and ConflictSetManager.
 	dependentTxCount prometheus.Gauge
+
+	// Registered only by ConflictSetManager; includes sets waiting for output delivery.
+	gdgActiveConflictSetCount            prometheus.GaugeFunc
+	gdgOldestActiveConflictSetAgeSeconds prometheus.GaugeFunc
 }
 
 func newPerformanceMetrics(p *monitoring.Provider, q *managerQueues) *perfMetrics {
@@ -190,4 +196,20 @@ func newPerformanceMetrics(p *monitoring.Provider, q *managerQueues) *perfMetric
 			Help:      "The number of transactions currently waiting on dependencies.",
 		}),
 	}
+}
+
+func (m *perfMetrics) registerConflictSetMetrics(dm *conflictSetDependencyManager) {
+	m.gdgActiveConflictSetCount = m.provider.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: subsystemGlobalDependencyGraph,
+		Name:      "active_conflict_sets",
+		Help:      "Number of conflict sets emitted but not fully validated, including sets queued for output",
+	}, dm.activeConflictSetCount)
+	m.gdgOldestActiveConflictSetAgeSeconds = m.provider.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: subsystemGlobalDependencyGraph,
+		Name:      "oldest_active_conflict_set_age_seconds",
+		Help: "Age in seconds of the oldest emitted conflict set not fully validated, " +
+			"including output queue time; zero if idle",
+	}, dm.oldestActiveConflictSetAgeSeconds)
 }

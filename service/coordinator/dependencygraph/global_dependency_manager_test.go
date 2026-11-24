@@ -8,9 +8,11 @@ package dependencygraph
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Chaguar/committer/utils/monitoring"
@@ -76,7 +78,7 @@ func TestGlobalDependencyManagerDependencyFreeTxs(t *testing.T) {
 		// the reads and writes performed by these transactions from the dependency detector
 		// so that the new transaction won't get a wrong dependency.
 		ensureProcessedAndValidatedMetrics(t, env.metrics, 3, 3)
-		ensureEmptyDetector(t, env.dm.dependencyDetector)
+		ensureEmptyDetector(t, env.dm.dependencyDetector, &env.dm.mu)
 	})
 }
 
@@ -123,7 +125,7 @@ func TestGlobalDependencyManagerNoGlobalDependency(t *testing.T) {
 
 		ensureProcessedAndValidatedMetrics(t, env.metrics, 3, 3)
 		// after validating t3, there is no more txs
-		ensureEmptyDetector(t, env.dm.dependencyDetector)
+		ensureEmptyDetector(t, env.dm.dependencyDetector, &env.dm.mu)
 
 		// as we are not updating the dependentsTxs of validated txs,
 		// the number of dependents is non-zero for t1.
@@ -190,7 +192,7 @@ func TestGlobalDependencyManagerBothLocalAndGlobalDependency(t *testing.T) {
 
 		ensureProcessedAndValidatedMetrics(t, env.metrics, 4, 4)
 		// after validating t3 and t4, there is no more txs
-		ensureEmptyDetector(t, env.dm.dependencyDetector)
+		ensureEmptyDetector(t, env.dm.dependencyDetector, &env.dm.mu)
 	})
 }
 
@@ -252,8 +254,47 @@ func TestGlobalDependencyManagerWithLimit(t *testing.T) {
 
 		ensureProcessedAndValidatedMetrics(t, env.metrics, 3, 3)
 		// after validating t3, there is no more txs
-		ensureEmptyDetector(t, env.dm.dependencyDetector)
+		ensureEmptyDetector(t, env.dm.dependencyDetector, &env.dm.mu)
 	})
+}
+
+func TestGlobalDependencyManagerCancelsBlockedFreedOutput(t *testing.T) {
+	t.Parallel()
+	outgoing := make(chan TxNodeBatch, 1)
+	outgoing <- TxNodeBatch{}
+	metrics := newPerformanceMetrics(monitoring.NewProvider(), &managerQueues{})
+	dm := newGlobalDependencyManager(&globalDepConfig{
+		outgoingDepFreeTxsNode: outgoing,
+		waitingTxsLimit:        10,
+		metrics:                metrics,
+	})
+	txs := TxNodeBatch{createTxNode(t, nil, makeTestKeys(t, 1), nil)}
+	metrics.gdgDepFreeTxCount.Set(1)
+	dm.freedTransactionsSet.add(txs)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := test.RunServiceForTest(ctx, t, func(ctx context.Context) error {
+		dm.run(ctx)
+		return nil
+	}, nil)
+	// Drain only at cleanup so even the broken implementation cannot hang the test suite.
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-outgoing:
+		default:
+		}
+	})
+	require.Eventually(t, func() bool {
+		dm.freedTransactionsSet.mu.Lock()
+		defer dm.freedTransactionsSet.mu.Unlock()
+		return len(dm.freedTransactionsSet.txsNode) == 0
+	}, time.Second, time.Millisecond)
+
+	cancel()
+	waitCtx, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	require.True(t, done.WaitForReady(waitCtx), "manager must stop with a full output channel")
+	test.RequireIntMetricValue(t, 1, metrics.gdgDepFreeTxCount)
 }
 
 func createTxsNodeBatch(_ *testing.T, txsNode TxNodeBatch) *transactionNodeBatch {
@@ -270,15 +311,18 @@ func createTxsNodeBatch(_ *testing.T, txsNode TxNodeBatch) *transactionNodeBatch
 
 func ensureProcessedAndValidatedMetrics(t *testing.T, metrics *perfMetrics, processed, validated int) {
 	t.Helper()
-	require.Eventually(t, func() bool {
-		return test.GetIntMetricValue(t, metrics.gdgTxProcessedTotal) == processed &&
-			test.GetIntMetricValue(t, metrics.gdgValidatedTxProcessedTotal) == validated
+	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+		require.Equal(ct, processed, test.GetIntMetricValue(ct, metrics.gdgTxProcessedTotal))
+		require.Equal(ct, validated, test.GetIntMetricValue(ct, metrics.gdgValidatedTxProcessedTotal))
 	}, 2*time.Second, 200*time.Millisecond)
 }
 
-func ensureEmptyDetector(t *testing.T, d *dependencyDetector) {
+// ensureEmptyDetector reads detector maps under their owning manager's lock.
+func ensureEmptyDetector(t *testing.T, d *dependencyDetector, mu *sync.Mutex) {
 	t.Helper()
 	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
 		return len(d.readOnlyKeyToWaitingTxs) == 0 && len(d.writeOnlyKeyToWaitingTxs) == 0 &&
 			len(d.readWriteKeyToWaitingTxs) == 0
 	}, 2*time.Second, 100*time.Millisecond)

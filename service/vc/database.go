@@ -16,7 +16,9 @@ import (
 	"github.com/Chaguar/common/api/committerpb"
 	"github.com/Chaguar/common/utils/retry"
 	"github.com/cockroachdb/errors"
+	"github.com/jackc/pgerrcode"
 	"github.com/yugabyte/pgx/v5"
+	"github.com/yugabyte/pgx/v5/pgconn"
 	"github.com/yugabyte/pgx/v5/pgxpool"
 
 	"github.com/Chaguar/committer/api/servicepb"
@@ -169,8 +171,8 @@ func (d *database) getNextBlockNumberToCommit(ctx context.Context) (*servicepb.B
 	value, retryErr := retry.ExecuteWithResult(ctx, d.retryProfile, func() ([]byte, error) {
 		r := d.pool.QueryRow(ctx, getMetadataPrepSQLStmt, lastCommittedBlockNumberKey)
 		var v []byte
-		return v, errors.Wrap(r.Scan(&v), "failed to get the last committed block number")
-	})
+		return v, markNonRetryable(errors.Wrap(r.Scan(&v), "failed to get the last committed block number"))
+	}, retry.ErrNonRetryable)
 	if retryErr != nil {
 		return nil, retryErr
 	}
@@ -515,7 +517,7 @@ func (d *database) readStatusWithHeight(
 	return retry.ExecuteWithResult(ctx, d.retryProfile, func() ([]*committerpb.TxStatus, error) {
 		r, queryErr := d.pool.Query(ctx, queryTxIDsStatusPrepSQLStmt, txIDs)
 		if queryErr != nil {
-			return nil, errors.Wrap(queryErr, "query txIDs from the table [tx_status]")
+			return nil, markNonRetryable(errors.Wrap(queryErr, "query txIDs from the table [tx_status]"))
 		}
 		defer r.Close()
 
@@ -526,7 +528,7 @@ func (d *database) readStatusWithHeight(
 			var height []byte
 
 			if err := r.Scan(&id, &status, &height); err != nil {
-				return nil, errors.Wrapf(err, "read rows from the query [%s] result", queryTxIDsStatusPrepSQLStmt)
+				return nil, markNonRetryable(errors.Wrapf(err, "read rows from the query [%s] result", queryTxIDsStatusPrepSQLStmt))
 			}
 
 			ht, _, err := servicepb.NewHeightFromBytes(height)
@@ -536,8 +538,8 @@ func (d *database) readStatusWithHeight(
 
 			rows = append(rows, ht.WithStatus(string(id), committerpb.Status(status)))
 		}
-		return rows, errors.Wrap(r.Err(), "reading rows")
-	})
+		return rows, markNonRetryable(errors.Wrap(r.Err(), "reading rows"))
+	}, retry.ErrNonRetryable)
 }
 
 func (d *database) readNamespacePolicies(ctx context.Context) (*applicationpb.NamespacePolicies, error) {
@@ -581,8 +583,8 @@ func retryQueryAndReadArrayResult[T any](
 		if readErr != nil {
 			logger.Debugf("attempt: %s", readErr)
 		}
-		return items, errors.Wrapf(readErr, "read rows from the query [%s] results", query)
-	})
+		return items, markNonRetryable(errors.Wrapf(readErr, "read rows from the query [%s] results", query))
+	}, retry.ErrNonRetryable)
 }
 
 func retryQueryAndReadTwoItems[T1, T2 any](
@@ -591,15 +593,15 @@ func retryQueryAndReadTwoItems[T1, T2 any](
 	res, err := retry.ExecuteWithResult(ctx, d.retryProfile, func() (*tuple[[]T1, []T2], error) {
 		rows, queryErr := d.pool.Query(ctx, query, args...)
 		if queryErr != nil {
-			return nil, errors.Wrapf(queryErr, "query rows: query [%s]", query)
+			return nil, markNonRetryable(errors.Wrapf(queryErr, "query rows: query [%s]", query))
 		}
 		defer rows.Close()
 		items1, items2, readErr := readTwoItems[T1, T2](rows)
 		return &tuple[[]T1, []T2]{
 			item1: items1,
 			item2: items2,
-		}, errors.Wrapf(readErr, "read rows from the query [%s] results", query)
-	})
+		}, markNonRetryable(errors.Wrapf(readErr, "read rows from the query [%s] results", query))
+	}, retry.ErrNonRetryable)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -623,4 +625,22 @@ func readTwoItems[T1, T2 any](r pgx.Rows) (items1 []T1, items2 []T2, err error) 
 func readArrayResult[T any](r pgx.Row) (res []T, err error) {
 	err = r.Scan(&res)
 	return res, errors.Wrap(err, "failed while scanning a row")
+}
+
+func markNonRetryable(err error) error {
+	var pgErr *pgconn.PgError
+
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+
+	switch pgErr.Code {
+	case pgerrcode.UndefinedTable,
+		pgerrcode.UndefinedFunction,
+		pgerrcode.UndefinedColumn:
+
+		return errors.Join(retry.ErrNonRetryable, err)
+	default:
+		return err
+	}
 }

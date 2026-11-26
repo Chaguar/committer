@@ -67,11 +67,7 @@ func (db *database) insertToken(ctx context.Context, rec *servicepb.TokenRecord)
 	// record's full-precision expiry.
 	expireUnix := rec.GetExpireTime().AsTime().Unix()
 	return retry.ExecuteWithResult(ctx, db.retry, func() (string, error) {
-		b, randErr := randomBytes()
-		if randErr != nil {
-			return "", randErr
-		}
-		token := base64.RawURLEncoding.EncodeToString(b)
+		token := base64.RawURLEncoding.EncodeToString(randomBytes())
 		if _, execErr := db.pool.Exec(ctx, sqlInsertToken, hashToken(token), data, expireUnix); execErr != nil {
 			return "", errors.Wrap(execErr, "failed to persist token record")
 		}
@@ -106,10 +102,7 @@ func (db *database) readToken(ctx context.Context, token string) (*servicepb.Tok
 // insertNonce generates a nonce and records it with its expiry. As with tokens, each attempt draws a fresh one.
 func (db *database) insertNonce(ctx context.Context, expireTime time.Time) ([]byte, error) {
 	return retry.ExecuteWithResult(ctx, db.retry, func() ([]byte, error) {
-		nonce, randErr := randomBytes()
-		if randErr != nil {
-			return nil, randErr
-		}
+		nonce := randomBytes()
 		if _, execErr := db.pool.Exec(ctx, sqlInsertNonce, nonce, expireTime.Unix()); execErr != nil {
 			return nil, errors.Wrap(execErr, "failed to persist nonce")
 		}
@@ -153,12 +146,10 @@ func (db *database) execRowsAffected(ctx context.Context, sqlStmt string, args .
 	return tag.RowsAffected(), err
 }
 
-func randomBytes() ([]byte, error) {
+func randomBytes() []byte {
 	b := make([]byte, randomLength)
-	if _, err := rand.Read(b); err != nil {
-		return nil, errors.Wrap(err, "failed to generate random bytes")
-	}
-	return b, nil
+	_, _ = rand.Read(b) // Never fails: crypto/rand crashes the program rather than return an error.
+	return b
 }
 
 // hashToken is the key a token's record is stored under, so the store holds nothing a client could present.

@@ -33,27 +33,25 @@ type configProvider struct {
 	db      *database
 	metrics *perfMetrics
 
-	bundle      atomic.Pointer[channelconfig.Bundle]
-	lastVersion uint64
-	seen        bool
+	bundle  atomic.Pointer[channelconfig.Bundle]
+	tracker statedb.ConfigVersionTracker
 }
 
 // run reads the configuration now, then every interval.
 func (p *configProvider) run(ctx context.Context, interval time.Duration) error {
-	if err := p.refresh(ctx); err != nil {
-		logger.Warnf("Initial channel-configuration load failed (will retry): %+v", err)
-	}
-
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
+		if err := p.refresh(ctx); err != nil {
+			logger.Errorf("Channel-configuration refresh failed: %+v", err)
+		} else {
+			promutil.SetGauge(p.metrics.configLastRefresh, int(time.Now().Unix()))
+		}
+
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := p.refresh(ctx); err != nil {
-				logger.Errorf("Channel-configuration refresh failed: %+v", err)
-			}
 		}
 	}
 }
@@ -61,18 +59,10 @@ func (p *configProvider) run(ctx context.Context, interval time.Duration) error 
 // refresh installs a new bundle only when the committed configuration's version has advanced.
 func (p *configProvider) refresh(ctx context.Context) error {
 	configTX, err := retry.ExecuteWithResult(ctx, p.db.retry, func() (*applicationpb.ConfigTransaction, error) {
-		return statedb.ReadConfigTransaction(ctx, p.db.pool)
+		return p.tracker.ReadIfNewer(ctx, p.db.pool)
 	}, puddle.ErrClosedPool)
-	if err != nil {
+	if err != nil || configTX == nil {
 		return err
-	}
-
-	promutil.SetGauge(p.metrics.configLastRefresh, int(time.Now().Unix()))
-	if len(configTX.GetEnvelope()) == 0 {
-		return nil // No configuration committed yet.
-	}
-	if p.seen && configTX.GetVersion() <= p.lastVersion {
-		return nil // Not newer than what we already hold.
 	}
 
 	envelope, err := protoutil.UnmarshalEnvelope(configTX.GetEnvelope())
@@ -86,8 +76,7 @@ func (p *configProvider) refresh(ctx context.Context) error {
 
 	sequence := bundle.ConfigtxValidator().Sequence()
 	p.bundle.Store(bundle)
-	p.lastVersion = configTX.GetVersion()
-	p.seen = true
+	p.tracker.Accept(configTX)
 	logger.Infof("Loaded channel configuration version %d (sequence %d)", configTX.GetVersion(), sequence)
 	return nil
 }

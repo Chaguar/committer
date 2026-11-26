@@ -16,6 +16,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 	"github.com/hyperledger/fabric-lib-go/common/flogging"
+	"github.com/yugabyte/pgx/v5/pgxpool"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc/health"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
@@ -272,7 +273,7 @@ func (q *Service) GetConfigTransaction(
 	ctx context.Context,
 	_ *emptypb.Empty,
 ) (*applicationpb.ConfigTransaction, error) {
-	res, err := queryConfig(ctx, q.batcher.pool)
+	res, err := statedb.ReadConfigTransaction(ctx, q.batcher.pool)
 	return res, grpcerror.WrapInternalError(err)
 }
 
@@ -315,20 +316,18 @@ func (q *Service) validateKeysCount(count int) error {
 
 // refreshTLSFromDB periodically polls the database for the config transaction
 // and updates the dynamic TLS CA certificates only when a newer config version is committed.
-func (q *Service) refreshTLSFromDB(ctx context.Context, pool querier) {
-	var lastVersion uint64
-	seen := false
+func (q *Service) refreshTLSFromDB(ctx context.Context, pool *pgxpool.Pool) {
+	var tracker statedb.ConfigVersionTracker
 
 	// tryRefresh attempts a single refresh. Errors are logged but not returned,
 	// as this is a background polling loop that should continue on transient failures.
 	tryRefresh := func() {
-		configTX, err := queryConfig(ctx, pool)
+		configTX, err := tracker.ReadIfNewer(ctx, pool)
 		if err != nil {
 			logger.Errorf("Failed to read config transaction from DB: %v", err)
 			return
 		}
-
-		if len(configTX.Envelope) == 0 || (seen && configTX.Version <= lastVersion) {
+		if configTX == nil {
 			return
 		}
 
@@ -338,10 +337,10 @@ func (q *Service) refreshTLSFromDB(ctx context.Context, pool querier) {
 			return
 		}
 
-		seen = true
-		lastVersion = configTX.Version
+		tracker.Accept(configTX)
 		q.tlsUpdater.UpdateClientRootCAs(certs)
-		logger.Infof("Updated dynamic TLS with %d CA certificates from config version %d", len(certs), lastVersion)
+		logger.Infof("Updated dynamic TLS with %d CA certificates from config version %d",
+			len(certs), configTX.Version)
 	}
 
 	// Attempt immediate refresh at startup to pick up existing config without waiting the

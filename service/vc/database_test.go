@@ -7,12 +7,17 @@ SPDX-License-Identifier: Apache-2.0
 package vc
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Chaguar/common/api/committerpb"
 	"github.com/Chaguar/common/utils/retry"
+	"github.com/cockroachdb/errors"
+	"github.com/jackc/pgerrcode"
 	"github.com/stretchr/testify/require"
+	"github.com/yugabyte/pgx/v5/pgconn"
 	"github.com/yugabyte/pgx/v5/pgxpool"
 
 	"github.com/Chaguar/committer/utils/statedb"
@@ -357,6 +362,182 @@ func TestNewDatabaseTabletsWithDetection(t *testing.T) {
 		expectedTablePreSplitTablets = 0
 	}
 	require.Equal(t, expectedTablePreSplitTablets, db.tablePreSplitTablets)
+}
+
+func TestMarkNonRetryable(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name         string
+		code         string
+		nonRetryable bool
+	}{
+		{
+			name:         "undefined table",
+			code:         pgerrcode.UndefinedTable,
+			nonRetryable: true,
+		},
+		{
+			name:         "undefined function",
+			code:         pgerrcode.UndefinedFunction,
+			nonRetryable: true,
+		},
+		{
+			name:         "undefined column",
+			code:         pgerrcode.UndefinedColumn,
+			nonRetryable: true,
+		},
+		{
+			name:         "deadlock detected",
+			code:         pgerrcode.DeadlockDetected,
+			nonRetryable: false,
+		},
+		{
+			name:         "serialization failure",
+			code:         pgerrcode.SerializationFailure,
+			nonRetryable: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			pgErr := &pgconn.PgError{Code: tc.code}
+
+			err := markNonRetryable(pgErr)
+
+			require.Equal(t, tc.nonRetryable,
+				errors.Is(err, retry.ErrNonRetryable))
+
+			require.ErrorIs(t, err, pgErr)
+		})
+	}
+
+	t.Run("nil error", func(t *testing.T) {
+		t.Parallel()
+		require.NoError(t, markNonRetryable(nil))
+	})
+
+	t.Run("non-postgres error", func(t *testing.T) {
+		t.Parallel()
+
+		err := errors.New("unexpected error")
+		require.Same(t, err, markNonRetryable(err))
+	})
+}
+
+func TestNonRetryableQueries(t *testing.T) {
+	t.Parallel()
+
+	env := NewDatabaseTestEnv(t)
+
+	env.DB.retryProfile = &retry.Profile{
+		InitialInterval: time.Minute,
+		MaxInterval:     time.Minute,
+		MaxElapsedTime:  new(time.Duration(0)),
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		code  string
+	}{
+		{
+			name:  "undefined table",
+			query: "SELECT key, value FROM ns_nonexistent;",
+			code:  pgerrcode.UndefinedTable,
+		},
+		{
+			name:  "undefined function",
+			query: "SELECT * FROM nonexistent_function();",
+			code:  pgerrcode.UndefinedFunction,
+		},
+		{
+			name:  "undefined column",
+			query: "SELECT nonexistent_column FROM metadata;",
+			code:  pgerrcode.UndefinedColumn,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			_, _, err := retryQueryAndReadTwoItems[[]byte, []byte](ctx, env.DB, tc.query)
+
+			require.NoError(t, ctx.Err())
+			require.ErrorIs(t, err, retry.ErrNonRetryable)
+
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			require.Equal(t, tc.code, pgErr.Code)
+
+			_, err = retryQueryAndReadArrayResult[int](ctx, env.DB, tc.query)
+
+			require.NoError(t, ctx.Err())
+			require.ErrorIs(t, err, retry.ErrNonRetryable)
+			require.ErrorAs(t, err, &pgErr)
+			require.Equal(t, tc.code, pgErr.Code)
+		})
+	}
+
+	t.Run("missing metadata table", func(t *testing.T) {
+		t.Parallel()
+
+		env := NewDatabaseTestEnv(t)
+		env.DB.retryProfile = &retry.Profile{
+			InitialInterval: time.Minute,
+			MaxInterval:     time.Minute,
+			MaxElapsedTime:  new(time.Duration(0)),
+		}
+
+		_, err := env.DB.pool.Exec(
+			t.Context(),
+			"ALTER TABLE metadata RENAME TO metadata_backup;",
+		)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
+		_, err = env.DB.getNextBlockNumberToCommit(ctx)
+
+		require.NoError(t, ctx.Err())
+		require.ErrorIs(t, err, retry.ErrNonRetryable)
+
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+		require.Equal(t, pgerrcode.UndefinedTable, pgErr.Code)
+	})
+
+	t.Run("missing tx_status table", func(t *testing.T) {
+		t.Parallel()
+
+		env := NewDatabaseTestEnv(t)
+		env.DB.retryProfile = &retry.Profile{
+			InitialInterval: time.Minute,
+			MaxInterval:     time.Minute,
+			MaxElapsedTime:  new(time.Duration(0)),
+		}
+
+		_, err := env.DB.pool.Exec(
+			t.Context(),
+			"ALTER TABLE tx_status RENAME TO tx_status_backup;",
+		)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+
+		_, err = env.DB.readStatusWithHeight(ctx, [][]byte{[]byte("tx1")})
+
+		require.NoError(t, ctx.Err())
+		require.ErrorIs(t, err, retry.ErrNonRetryable)
+
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+		require.Equal(t, pgerrcode.UndefinedTable, pgErr.Code)
+	})
 }
 
 func commit(t *testing.T, dbEnv *DatabaseTestEnv, states *statesToBeCommitted) {

@@ -361,7 +361,8 @@ func TestAuthAuthenticateIdentityCases(t *testing.T) {
 func TestVerifyEnvelope(t *testing.T) {
 	t.Parallel()
 	channelArtifactsPath := t.TempDir()
-	channelConfigBlock, err := testcrypto.CreateOrExtendConfigBlockWithCrypto(channelArtifactsPath,
+	channelConfigBlock, err := testcrypto.CreateOrExtendConfigBlockWithCrypto(
+		channelArtifactsPath,
 		&testcrypto.ConfigBlock{ChannelID: defaultTestChannelID, PeerOrganizationCount: 1},
 	)
 	require.NoError(t, err)
@@ -374,7 +375,8 @@ func TestVerifyEnvelope(t *testing.T) {
 
 	// cryptogen names the foreign organization peer-org-0 as well, but under a CA the channel does not trust.
 	foreignArtifactsPath := t.TempDir()
-	_, err = testcrypto.CreateOrExtendConfigBlockWithCrypto(foreignArtifactsPath,
+	_, err = testcrypto.CreateOrExtendConfigBlockWithCrypto(
+		foreignArtifactsPath,
 		&testcrypto.ConfigBlock{ChannelID: defaultTestChannelID, PeerOrganizationCount: 1},
 	)
 	require.NoError(t, err)
